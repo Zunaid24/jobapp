@@ -1,15 +1,75 @@
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
-html,
+html, body { margin: 0; padding: 0; }
+
 body {
-  margin: 0;
-  padding: 0;
+  background: #f5f7fb;
+  color: #111827;
   font-family: Arial, Helvetica, sans-serif;
 }
 
-body {
-  background: #ffffff;
-  color: #111111;
+button, a { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+
+.app-shell {
+  width: 100%;
+  max-width: 720px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 20px 16px 96px;
+}
+
+.topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+.eyebrow { font-size: 11px; font-weight: 800; letter-spacing: .14em; color: #667085; }
+h1, h2, h3, p { margin: 0; }
+h1 { margin-top: 5px; font-size: 28px; letter-spacing: -.03em; }
+h2 { margin-top: 4px; font-size: 22px; }
+h3 { font-size: 17px; line-height: 1.25; }
+.icon-button { width: 42px; height: 42px; border: 1px solid #e4e7ec; border-radius: 12px; background: #fff; font-size: 20px; }
+
+.gmail-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 16px; border: 1px solid #f0c7c7; border-radius: 18px; background: #fff7f7; margin-bottom: 18px;
+}
+.gmail-card.connected { border-color: #b7dfc4; background: #f2fbf5; }
+.gmail-card p { margin-top: 5px; color: #667085; font-size: 13px; line-height: 1.4; }
+.status-line { display: flex; align-items: center; gap: 8px; }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; background: #16a34a; }
+.status-dot.offline { background: #dc2626; }
+
+.primary-button, .secondary-button {
+  min-height: 44px; padding: 0 15px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; text-decoration: none; white-space: nowrap; font-weight: 700; font-size: 14px;
+}
+.primary-button { background: #111827; color: #fff; }
+.secondary-button { background: #fff; color: #111827; border: 1px solid #d0d5dd; }
+
+.switcher { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: #e9edf3; border-radius: 14px; margin-bottom: 24px; }
+.switcher button { border: 0; background: transparent; border-radius: 10px; min-height: 44px; color: #667085; font-weight: 700; }
+.switcher button.active { background: #fff; color: #111827; box-shadow: 0 1px 3px rgba(16,24,40,.08); }
+
+.section-heading { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; }
+.job-count { font-size: 12px; color: #667085; }
+.job-list { display: grid; gap: 12px; }
+.job-card { padding: 16px; border: 1px solid #e4e7ec; border-radius: 18px; background: #fff; box-shadow: 0 2px 8px rgba(16,24,40,.04); }
+.job-card-top { display: flex; justify-content: space-between; gap: 12px; }
+.job-card-top p { margin-top: 5px; color: #667085; font-size: 14px; }
+.match { display: inline-flex; align-items: center; justify-content: center; min-width: 52px; height: 30px; padding: 0 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 12px; font-weight: 800; }
+.job-meta { display: flex; gap: 7px; margin: 14px 0; color: #667085; font-size: 13px; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.actions .primary-button, .actions .secondary-button { width: 100%; }
+.disabled-note { display: block; margin-top: 9px; color: #98a2b3; font-size: 11px; }
+
+.bottom-nav {
+  position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); width: min(calc(100% - 24px), 688px);
+  display: grid; grid-template-columns: repeat(3, 1fr); padding: 8px; gap: 4px;
+  border: 1px solid #e4e7ec; border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: 0 10px 30px rgba(16,24,40,.12); backdrop-filter: blur(12px);
+}
+.bottom-nav button { min-height: 52px; border: 0; border-radius: 12px; background: transparent; color: #667085; font-size: 19px; display: flex; flex-direction: column; gap: 2px; align-items: center; justify-content: center; }
+.bottom-nav button span { font-size: 11px; font-weight: 700; }
+.bottom-nav .nav-active { background: #f2f4f7; color: #111827; }
+
+@media (min-width: 721px) {
+  .app-shell { padding-top: 36px; }
 }
