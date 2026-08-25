@@ -1,75 +1,17 @@
 * { box-sizing: border-box; }
-
 html, body { margin: 0; padding: 0; }
-
-body {
-  background: #f5f7fb;
-  color: #111827;
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-button, a { font: inherit; }
-button { cursor: pointer; }
-button:disabled { cursor: not-allowed; opacity: .45; }
-
-.app-shell {
-  width: 100%;
-  max-width: 720px;
-  min-height: 100vh;
-  margin: 0 auto;
-  padding: 20px 16px 96px;
-}
-
-.topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
-.eyebrow { font-size: 11px; font-weight: 800; letter-spacing: .14em; color: #667085; }
-h1, h2, h3, p { margin: 0; }
-h1 { margin-top: 5px; font-size: 28px; letter-spacing: -.03em; }
-h2 { margin-top: 4px; font-size: 22px; }
-h3 { font-size: 17px; line-height: 1.25; }
-.icon-button { width: 42px; height: 42px; border: 1px solid #e4e7ec; border-radius: 12px; background: #fff; font-size: 20px; }
-
-.gmail-card {
-  display: flex; align-items: center; justify-content: space-between; gap: 14px;
-  padding: 16px; border: 1px solid #f0c7c7; border-radius: 18px; background: #fff7f7; margin-bottom: 18px;
-}
-.gmail-card.connected { border-color: #b7dfc4; background: #f2fbf5; }
-.gmail-card p { margin-top: 5px; color: #667085; font-size: 13px; line-height: 1.4; }
-.status-line { display: flex; align-items: center; gap: 8px; }
-.status-dot { width: 9px; height: 9px; border-radius: 50%; background: #16a34a; }
-.status-dot.offline { background: #dc2626; }
-
-.primary-button, .secondary-button {
-  min-height: 44px; padding: 0 15px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center;
-  border: 0; text-decoration: none; white-space: nowrap; font-weight: 700; font-size: 14px;
-}
-.primary-button { background: #111827; color: #fff; }
-.secondary-button { background: #fff; color: #111827; border: 1px solid #d0d5dd; }
-
-.switcher { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: #e9edf3; border-radius: 14px; margin-bottom: 24px; }
-.switcher button { border: 0; background: transparent; border-radius: 10px; min-height: 44px; color: #667085; font-weight: 700; }
-.switcher button.active { background: #fff; color: #111827; box-shadow: 0 1px 3px rgba(16,24,40,.08); }
-
-.section-heading { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; }
-.job-count { font-size: 12px; color: #667085; }
-.job-list { display: grid; gap: 12px; }
-.job-card { padding: 16px; border: 1px solid #e4e7ec; border-radius: 18px; background: #fff; box-shadow: 0 2px 8px rgba(16,24,40,.04); }
-.job-card-top { display: flex; justify-content: space-between; gap: 12px; }
-.job-card-top p { margin-top: 5px; color: #667085; font-size: 14px; }
-.match { display: inline-flex; align-items: center; justify-content: center; min-width: 52px; height: 30px; padding: 0 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 12px; font-weight: 800; }
-.job-meta { display: flex; gap: 7px; margin: 14px 0; color: #667085; font-size: 13px; }
-.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.actions .primary-button, .actions .secondary-button { width: 100%; }
-.disabled-note { display: block; margin-top: 9px; color: #98a2b3; font-size: 11px; }
-
-.bottom-nav {
-  position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); width: min(calc(100% - 24px), 688px);
-  display: grid; grid-template-columns: repeat(3, 1fr); padding: 8px; gap: 4px;
-  border: 1px solid #e4e7ec; border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: 0 10px 30px rgba(16,24,40,.12); backdrop-filter: blur(12px);
-}
-.bottom-nav button { min-height: 52px; border: 0; border-radius: 12px; background: transparent; color: #667085; font-size: 19px; display: flex; flex-direction: column; gap: 2px; align-items: center; justify-content: center; }
-.bottom-nav button span { font-size: 11px; font-weight: 700; }
-.bottom-nav .nav-active { background: #f2f4f7; color: #111827; }
-
-@media (min-width: 721px) {
-  .app-shell { padding-top: 36px; }
-}
+body { background: #f5f7fb; color: #111827; font-family: Arial, Helvetica, sans-serif; }
+button, a, input, textarea { font: inherit; } button { cursor: pointer; } button:disabled { cursor: not-allowed; opacity: .45; }
+.app-shell { width: 100%; max-width: 720px; min-height: 100vh; margin: 0 auto; padding: 20px 16px 96px; }
+.topbar { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; } .eyebrow{font-size:11px;font-weight:800;letter-spacing:.14em;color:#667085}.topbar h1{margin:5px 0 0;font-size:28px;letter-spacing:-.03em} h2{margin:4px 0 0;font-size:22px} h3{font-size:17px;line-height:1.25;margin:0} p{margin:0}
+.icon-button{width:42px;height:42px;border:1px solid #e4e7ec;border-radius:12px;background:#fff;font-size:20px}
+.gmail-card{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px;border:1px solid #f0c7c7;border-radius:18px;background:#fff7f7;margin-bottom:12px}.gmail-card.connected{border-color:#b7dfc4;background:#f2fbf5}.gmail-card p{margin-top:5px;color:#667085;font-size:13px;line-height:1.4}.status-line{display:flex;align-items:center;gap:8px}.status-dot{width:9px;height:9px;border-radius:50%;background:#16a34a}.status-dot.offline{background:#dc2626}
+.primary-button,.secondary-button{min-height:44px;padding:0 15px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;border:0;text-decoration:none;white-space:nowrap;font-weight:700;font-size:14px}.primary-button{background:#111827;color:#fff}.secondary-button{background:#fff;color:#111827;border:1px solid #d0d5dd}.full-button{width:100%;}
+.notice{margin:10px 0;padding:11px 13px;border-radius:12px;background:#eef4ff;color:#344054;font-size:13px}
+.switcher{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;background:#e9edf3;border-radius:14px;margin-bottom:24px}.switcher button{border:0;background:transparent;border-radius:10px;min-height:44px;color:#667085;font-weight:700}.switcher button.active{background:#fff;color:#111827;box-shadow:0 1px 3px rgba(16,24,40,.08)}
+.section-heading{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:12px}.job-count{font-size:12px;color:#667085}.job-list{display:grid;gap:12px}.job-card{padding:16px;border:1px solid #e4e7ec;border-radius:18px;background:#fff;box-shadow:0 2px 8px rgba(16,24,40,.04)}.job-card-top{display:flex;justify-content:space-between;gap:12px}.job-card-top p{margin-top:5px;color:#667085;font-size:14px}.match{display:inline-flex;align-items:center;justify-content:center;min-width:52px;height:30px;padding:0 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:800}.job-meta{display:flex;gap:7px;margin:14px 0;color:#667085;font-size:13px}.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.actions .primary-button,.actions .secondary-button{width:100%}.disabled-note{display:block;margin-top:9px;color:#98a2b3;font-size:11px}.empty-state{padding:24px;text-align:center;border:1px dashed #d0d5dd;border-radius:16px;color:#667085;background:#fff;font-size:13px}
+.bottom-nav{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);width:min(calc(100% - 24px),688px);display:grid;grid-template-columns:repeat(3,1fr);padding:8px;gap:4px;border:1px solid #e4e7ec;border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 10px 30px rgba(16,24,40,.12);backdrop-filter:blur(12px);z-index:20}.bottom-nav button{min-height:52px;border:0;border-radius:12px;background:transparent;color:#667085;font-size:19px;display:flex;flex-direction:column;gap:2px;align-items:center;justify-content:center}.bottom-nav button span{font-size:11px;font-weight:700}.bottom-nav .nav-active{background:#f2f4f7;color:#111827}
+.tracker-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}.tracker-summary div{padding:14px 8px;text-align:center;background:#fff;border:1px solid #e4e7ec;border-radius:14px}.tracker-summary strong{display:block;font-size:20px}.tracker-summary span{font-size:11px;color:#667085}.status-pill{padding:7px 9px;border-radius:999px;background:#f2f4f7;color:#344054;font-size:11px;font-weight:800}.tracker-card .full-button{margin-top:4px}
+.profile-section{display:grid;gap:12px}.profile-help{margin-top:5px;color:#667085;font-size:13px;line-height:1.45}.profile-section label,.modal label{display:grid;gap:6px;font-size:12px;font-weight:700;color:#344054}.profile-section input,.profile-section textarea,.modal input,.modal textarea{width:100%;border:1px solid #d0d5dd;border-radius:12px;background:#fff;padding:12px;outline:none;resize:vertical}.profile-section textarea{min-height:90px}.profile-section input:focus,.profile-section textarea:focus,.modal input:focus,.modal textarea:focus{border-color:#667085}
+.modal-backdrop{position:fixed;inset:0;z-index:30;display:flex;align-items:flex-end;justify-content:center;padding:12px;background:rgba(16,24,40,.45)}.modal{width:min(100%,680px);max-height:90vh;overflow:auto;background:#fff;border-radius:22px;padding:20px;box-shadow:0 20px 50px rgba(16,24,40,.25)}.modal h2{margin-top:6px}.modal-company{margin-top:6px;color:#667085}.modal-description{margin:18px 0;line-height:1.55;color:#475467;font-size:14px}.modal-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}.modal-actions .primary-button,.modal-actions .secondary-button{width:100%}.message-box{min-height:220px}
+@media (min-width:721px){.app-shell{padding-top:36px}.modal-backdrop{align-items:center}}
