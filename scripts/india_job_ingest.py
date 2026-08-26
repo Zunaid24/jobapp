@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect fresh Goa jobs from LinkedIn and Indeed India."""
+"""Collect genuinely fresh Goa jobs from LinkedIn and Indeed India."""
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +14,8 @@ from india_jobspy.scrape import scrape_jobs
 
 QUERIES = ["HR Executive", "Human Resources", "HR Recruiter", "Talent Acquisition", "HR Coordinator"]
 SITES = ["linkedin", "indeed"]
+ALLOWED_SOURCES = {"linkedin", "indeed"}
+GOA_TERMS = ("goa", "panaji", "panjim", "margao", "mapusa", "vasco")
 
 
 def clean(value):
@@ -24,21 +26,30 @@ def clean(value):
     return str(value).strip() or None
 
 
-def normalize(row: dict) -> dict | None:
+def normalize(row: dict, max_age_hours: int) -> dict | None:
     title = clean(row.get("title")); company = clean(row.get("company")); location = clean(row.get("location")) or clean(row.get("city")); url = clean(row.get("job_url"))
-    if not title or not company or not location or not url:
+    source = (clean(row.get("site")) or "").lower().strip()
+    if source not in ALLOWED_SOURCES or not title or not company or not location or not url:
         return None
-    if not any(x in location.lower() for x in ("goa", "panaji", "panjim", "margao", "mapusa", "vasco")):
+    if not any(x in location.lower() for x in GOA_TERMS):
         return None
-    posted = clean(row.get("date_posted"))
-    if posted:
-        try: posted = pd.to_datetime(posted, utc=True).isoformat()
-        except Exception: posted = None
+    raw_posted = row.get("date_posted")
+    if raw_posted is None or (isinstance(raw_posted, float) and pd.isna(raw_posted)):
+        return None
+    try:
+        posted_dt = pd.to_datetime(raw_posted, utc=True)
+        if pd.isna(posted_dt):
+            return None
+        age_hours = (pd.Timestamp.now(tz="UTC") - posted_dt).total_seconds() / 3600
+        if age_hours < -1 or age_hours > max_age_hours:
+            return None
+        posted = posted_dt.isoformat()
+    except Exception:
+        return None
     source_id = hashlib.sha256(url.lower().encode()).hexdigest()[:32]
     return {
-        "id": source_id, "source_job_id": source_id,
-        "source": clean(row.get("site")) or "unknown", "title": title,
-        "company": company, "location": "Goa",
+        "id": source_id, "source_job_id": source_id, "source": source,
+        "title": title, "company": company, "location": "Goa",
         "type": clean(row.get("job_type")) or "Full-time",
         "description": (clean(row.get("description")) or "")[:30000],
         "apply_url": url, "posted_at": posted,
@@ -56,7 +67,7 @@ def main() -> int:
         try:
             frame = scrape_jobs(search_term=query, location="Goa", site_name=SITES, results_wanted=results_per_query, hours_old=hours_old, linkedin_fetch_description=False, verbose=0)
             for record in frame.to_dict(orient="records"):
-                job = normalize(record)
+                job = normalize(record, hours_old)
                 if job: collected.append(job)
         except Exception as exc:
             failures.append(f"{query}: {exc}")
