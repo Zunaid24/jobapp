@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 
 const SESSION_COOKIE = "jobapp_session";
 const SESSION_HOURS = 12;
-const OAUTH_SCOPES = ["https://www.googleapis.com/auth/gmail.send"];
+const OAUTH_SCOPES = ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/userinfo.email"];
 
 function required(name: string) {
   const value = process.env[name];
@@ -83,9 +83,9 @@ async function refreshAccessToken(refreshToken: string) {
 }
 
 export async function fetchGoogleEmail(accessToken: string) {
-  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" });
+  const response = await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" });
   if (!response.ok) return null;
-  return ((await response.json()) as { emailAddress?: string }).emailAddress ?? null;
+  return ((await response.json()) as { email?: string }).email ?? null;
 }
 
 export async function saveGmailConnection(input: { sessionId: string; accessToken: string; refreshToken?: string | null; expiresIn: number; email: string | null }) {
