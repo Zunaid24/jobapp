@@ -3,15 +3,15 @@ import { createClient } from "@supabase/supabase-js";
 
 const ACTOR_ID = process.env.APIFY_ACTOR_ID || "0MLZsCqd5IlOf8ve3";
 const DEFAULT_INPUT = {
-  keyword: null,
-  location: null,
+  keyword: "",
+  location: "",
   experience: 0,
   maxResults: 20,
   sources: ["LinkedIn", "Indeed", "SimplyHired"],
   postedMaxDays: 0,
   jobType: "Any",
   educationLevel: "Any",
-  skills: null,
+  skills: "",
 };
 
 type ApifyJob = Record<string, unknown>;
@@ -109,6 +109,13 @@ export async function refreshDailyJobs() {
       const configured = JSON.parse(process.env.APIFY_INPUT_JSON) as Record<string, unknown>;
       input = { ...input, ...configured };
     }
+
+    // The selected Actor schema requires string values for these optional text inputs.
+    // Treat null/undefined from Vercel configuration as empty strings rather than sending invalid JSON input.
+    for (const field of ["keyword", "location", "skills"] as const) {
+      if (input[field] == null) input[field] = "";
+    }
+
     const items = await runActor(input);
     const normalized = items.map(normalize).filter((item): item is NonNullable<ReturnType<typeof normalize>> => Boolean(item));
 
