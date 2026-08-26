@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect fresh Goa jobs from LinkedIn and Indeed India."""
+"""Collect fresh Goa jobs from Naukri, LinkedIn and Indeed India."""
 from __future__ import annotations
 
 import hashlib
@@ -13,7 +13,7 @@ import requests
 from india_jobspy.scrape import scrape_jobs
 
 QUERIES = ["HR Executive", "Human Resources", "HR Recruiter", "Talent Acquisition", "HR Coordinator"]
-SITES = ["linkedin", "indeed"]
+SITES = ["naukri", "linkedin", "indeed"]
 
 
 def clean(value):
