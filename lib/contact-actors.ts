@@ -8,7 +8,7 @@ const HR_TITLES = [
   "HR Business Partner", "People Partner", "People Operations", "Head of HR", "Head of Talent",
   "Talent Partner", "Hiring Manager", "Staffing", "Resourcing"
 ];
-const HR_RE = /\b(hr|human resources|recruiter|recruiting|recruitment|talent acquisition|talent management|talent partner|people operations|people ops|people partner|hr business partner|staffing|resourcing|hiring manager)\b/i;
+const HR_RE = /\b(hr|human resources|recruiter|recruiting|recruitment|talent acquisition|talent management|talent partner|people operations|people ops|people partner|hr business partner|staffing|resourcing|hiring manager|people & culture|people and culture)\b/i;
 const PRIORITY_RE = /\b(recruiter|talent acquisition|recruitment|hr manager|human resources manager|hr business partner|people partner|people operations|head of hr|head of talent|talent partner|hiring manager)\b/i;
 
 function required(name: string) { const value = process.env[name]; if (!value) throw new Error(`Missing environment variable: ${name}`); return value; }
@@ -24,9 +24,9 @@ function normalizePerson(row: Record<string, unknown>, companyName: string) {
   const first = text(row.firstName, row.first_name);
   const last = text(row.lastName, row.last_name);
   const name = text(row.name, row.fullName, row.full_name, first && last ? `${first} ${last}` : "");
-  const title = text(row.jobTitle, row.job_title, row.title, row.headline, row.position, row.role);
+  const title = text(row.jobTitle, row.job_title, row.title, row.headline, row.position, row.role, row.currentJobTitle, row.current_job_title);
   const linkedin = normalizeLinkedIn(row.profileUrl ?? row.profile_url ?? row.linkedinUrl ?? row.linkedin_url ?? row.linkedin ?? row.url);
-  const company = text(row.companyName, row.company_name, row.company, row.current_company);
+  const company = text(row.companyName, row.company_name, row.company, row.current_company, row.currentCompany);
   if (!name || !title || !linkedin || !HR_RE.test(title)) return null;
   return { name, title, linkedin_url: linkedin, company: company || companyName, email: null as string | null, raw: row };
 }
@@ -47,20 +47,20 @@ async function callActor(actorId: string, input: Record<string, unknown>, maxCha
 }
 
 export async function findHrContacts(companyName: string, companyLinkedInUrl?: string | null) {
-  const identity = normalizeLinkedIn(companyLinkedInUrl) || companyName;
+  const identity = normalizeLinkedIn(companyLinkedInUrl);
+  if (!identity) throw new Error(`Company LinkedIn URL is required for HR contact lookup. Could not resolve LinkedIn for ${companyName}.`);
+
   const items = await callActor(EMPLOYEE_ACTOR, {
     companies: [identity],
-    targetTitles: HR_TITLES,
-    seniorityFilter: [],
+    jobTitles: HR_TITLES,
     maxItems: 10,
-    verifyProfiles: true,
-    enrichEmails: false,
-    findPersonalEmails: false,
-    deepVerify: false,
-    googlePages: 1,
-    maxConcurrency: 5,
-    cookies: [],
+    maxItemsPerCompany: 10,
+    companyBatchMode: "one_by_one",
+    profileScraperMode: "Short",
+    takePages: 1,
+    startPage: 1,
   }, "0.10", 90);
+
   const people = items.map(x => normalizePerson(x, companyName)).filter((x): x is NonNullable<ReturnType<typeof normalizePerson>> => Boolean(x));
   const unique = Array.from(new Map(people.map(p => [p.linkedin_url.toLowerCase(), p])).values());
   unique.sort((a, b) => Number(PRIORITY_RE.test(b.title)) - Number(PRIORITY_RE.test(a.title)) || a.name.localeCompare(b.name));
@@ -98,6 +98,6 @@ export async function resolveCompanyLinkedIn(companyId: string) {
     const match = html.match(/https?:\/\/(?:www\.)?linkedin\.com\/company\/[A-Za-z0-9._-]+/i);
     const linkedin = normalizeLinkedIn(match?.[0]);
     if (linkedin) { await client.from("companies").update({ linkedin_url: linkedin, updated_at: new Date().toISOString() }).eq("id", companyId); return linkedin; }
-  } catch { /* fallback to company name below */ }
+  } catch { /* fallback below */ }
   return "";
 }
