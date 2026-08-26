@@ -37,7 +37,7 @@ export async function refreshDailyJobs(options:{force?:boolean}={}){
   const excludeJobs=(history||[]).map(j=>({id:j.id,title:j.title,company:j.company,location:j.location,url:j.apply_url}));
   let input:Record<string,unknown>={...DEFAULT_INPUT,maxResults:plan.maxResults,postedMaxDays:plan.postedMaxDays};
   if(process.env.APIFY_INPUT_JSON)input={...input,...JSON.parse(process.env.APIFY_INPUT_JSON) as Record<string,unknown>};
-  input.keyword="HR";input.location="Goa";input.postedMaxDays=plan.postedMaxDays;input.maxResults=Math.min(15,Math.max(10,plan.maxResults));input.skills=plan.roleQueries.join(", ");input.excludeJobs=excludeJobs;
+  input.keyword="HR";input.location="Goa";input.postedMaxDays=plan.postedMaxDays;input.maxResults=Math.min(15,Math.max(10,plan.maxResults));input.skills=plan.roleQueries.join(", ");
 
   const items=await runActor(input);
   const normalized=items.map(normalize).filter((x):x is NonNullable<ReturnType<typeof normalize>>=>Boolean(x));
