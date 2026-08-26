@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Stable Vercel branch alias for the MVP branch. Production is still on main.
+  JOBAPP_INGEST_URL: https://jobapp-git-mvp-free-data-pipeline-xunayd786-9098s-projects.vercel.app
+
 jobs:
   discover:
     runs-on: ubuntu-latest
@@ -26,7 +30,6 @@ jobs:
           pip install "git+https://github.com/vrunudar19/india-jobspy.git" requests
       - name: Discover Goa jobs
         env:
-          JOBAPP_INGEST_URL: ${{ secrets.JOBAPP_INGEST_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           JOB_FRESHNESS_HOURS: "72"
           RESULTS_PER_QUERY: "20"
