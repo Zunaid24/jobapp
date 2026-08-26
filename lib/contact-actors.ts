@@ -3,14 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 const EMPLOYEE_ACTOR = "u1EmtfXEWdmHmn4yW";
 const EMAIL_ACTOR = "bfH8Ermocz8oYKQVO";
 const HR_TITLES = [
-  "Recruiter", "HR Recruiter", "Talent Acquisition", "Talent Acquisition Specialist",
-  "Talent Acquisition Partner", "Talent Acquisition Manager", "Recruitment", "Recruitment Specialist",
-  "Recruitment Manager", "HR Manager", "Human Resources Manager", "HR Business Partner",
-  "People Partner", "People Operations", "People Ops", "Head of HR", "Head of Human Resources",
-  "Head of Talent", "Talent Partner", "Hiring Manager", "Staffing", "Resourcing"
+  "Recruiter", "Talent Acquisition", "Talent Acquisition Specialist", "Talent Acquisition Partner",
+  "Talent Acquisition Manager", "Recruitment Manager", "HR Manager", "Human Resources Manager",
+  "HR Business Partner", "People Partner", "People Operations", "Head of HR", "Head of Talent",
+  "Talent Partner", "Hiring Manager", "Staffing", "Resourcing"
 ];
 const HR_RE = /\b(hr|human resources|recruiter|recruiting|recruitment|talent acquisition|talent management|talent partner|people operations|people ops|people partner|hr business partner|staffing|resourcing|hiring manager)\b/i;
-const PRIORITY_RE = /\b(recruiter|talent acquisition|recruitment|hr manager|human resources manager|hr business partner|people partner|people operations|head of hr|head of talent|talent partner)\b/i;
+const PRIORITY_RE = /\b(recruiter|talent acquisition|recruitment|hr manager|human resources manager|hr business partner|people partner|people operations|head of hr|head of talent|talent partner|hiring manager)\b/i;
 
 function required(name: string) { const value = process.env[name]; if (!value) throw new Error(`Missing environment variable: ${name}`); return value; }
 function text(...values: unknown[]) { return values.find(v => typeof v === "string" && v.trim())?.toString().trim() || ""; }
@@ -32,12 +31,19 @@ function normalizePerson(row: Record<string, unknown>, companyName: string) {
   return { name, title, linkedin_url: linkedin, company: company || companyName, email: null as string | null, raw: row };
 }
 
-async function callActor(actorId: string, input: Record<string, unknown>, maxCharge = "0.10") {
+async function callActor(actorId: string, input: Record<string, unknown>, maxCharge = "0.10", timeoutSeconds = 90) {
   const token = required("APIFY_API_TOKEN");
-  const endpoint = `https://api.apify.com/v2/actors/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?maxTotalChargeUsd=${maxCharge}`;
-  const response = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(input), cache: "no-store" });
-  if (!response.ok) throw new Error(`Apify actor ${actorId} failed (${response.status}): ${(await response.text()).slice(0, 500)}`);
-  const data = await response.json(); return Array.isArray(data) ? data as Record<string, unknown>[] : [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), (timeoutSeconds + 10) * 1000);
+  const endpoint = `https://api.apify.com/v2/actors/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?timeout=${timeoutSeconds}&maxTotalChargeUsd=${maxCharge}`;
+  try {
+    const response = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(input), cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error(`Apify actor ${actorId} failed (${response.status}): ${(await response.text()).slice(0, 500)}`);
+    const data = await response.json(); return Array.isArray(data) ? data as Record<string, unknown>[] : [];
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw new Error(`HR contact lookup timed out after ${timeoutSeconds} seconds. Please try again.`);
+    throw error;
+  } finally { clearTimeout(timer); }
 }
 
 export async function findHrContacts(companyName: string, companyLinkedInUrl?: string | null) {
@@ -51,10 +57,10 @@ export async function findHrContacts(companyName: string, companyLinkedInUrl?: s
     enrichEmails: false,
     findPersonalEmails: false,
     deepVerify: false,
-    googlePages: 3,
-    maxConcurrency: 10,
+    googlePages: 1,
+    maxConcurrency: 5,
     cookies: [],
-  });
+  }, "0.10", 90);
   const people = items.map(x => normalizePerson(x, companyName)).filter((x): x is NonNullable<ReturnType<typeof normalizePerson>> => Boolean(x));
   const unique = Array.from(new Map(people.map(p => [p.linkedin_url.toLowerCase(), p])).values());
   unique.sort((a, b) => Number(PRIORITY_RE.test(b.title)) - Number(PRIORITY_RE.test(a.title)) || a.name.localeCompare(b.name));
@@ -71,7 +77,7 @@ function extractEmail(row: Record<string, unknown>) {
 export async function findEmails(linkedinUrls: string[]) {
   const urls = Array.from(new Set(linkedinUrls.map(normalizeLinkedIn).filter(Boolean))).slice(0, 5);
   if (!urls.length) return [];
-  const items = await callActor(EMAIL_ACTOR, { urls }, "0.10");
+  const items = await callActor(EMAIL_ACTOR, { urls }, "0.10", 90);
   return items.map(row => ({
     linkedin_url: normalizeLinkedIn(row.profileUrl ?? row.profile_url ?? row.linkedinUrl ?? row.linkedin_url ?? row.linkedin ?? row.url),
     email: extractEmail(row),
