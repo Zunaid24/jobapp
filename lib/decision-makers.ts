@@ -4,6 +4,22 @@ import { createClient } from "@supabase/supabase-js";
 const ACTOR_ID = process.env.CONTACT_ENRICHMENT_ACTOR_ID || "harvestapi~linkedin-company-employees";
 const HR_TITLE = /\b(hr|human resources|recruiter|recruiting|recruitment|talent acquisition|talent management|talent partner|people operations|people ops|people partner|hr business partner|staffing|resourcing|hiring manager)\b/i;
 const PRIORITY_TITLE = /\b(recruiter|talent acquisition|talent partner|recruitment|recruiting|hr manager|human resources manager|hr business partner|people partner|people operations|head of hr|head of human resources|head of talent)\b/i;
+const TARGET_JOB_TITLES = [
+  "Recruiter",
+  "HR Recruiter",
+  "Talent Acquisition Specialist",
+  "Talent Acquisition Partner",
+  "Talent Acquisition Manager",
+  "Recruitment Specialist",
+  "Recruitment Manager",
+  "HR Manager",
+  "Human Resources Manager",
+  "HR Business Partner",
+  "People Partner",
+  "People Operations",
+  "Head of HR",
+  "Head of Talent",
+];
 
 function required(name: string) {
   const value = process.env[name];
@@ -116,7 +132,7 @@ function normalizeLead(row: Record<string, unknown>) {
   };
 }
 
-async function runActor(companyLinkedInUrl: string, companyWebsite?: string | null) {
+async function runActor(companyIdentity: string, companyWebsite?: string | null) {
   const token = required("APIFY_API_TOKEN");
   const endpoint = `https://api.apify.com/v2/actors/${encodeURIComponent(ACTOR_ID)}/run-sync-get-dataset-items?maxItems=20&maxTotalChargeUsd=0.30`;
   const response = await fetch(endpoint, {
@@ -125,10 +141,12 @@ async function runActor(companyLinkedInUrl: string, companyWebsite?: string | nu
     body: JSON.stringify({
       profileScraperMode: "Full + email search ($12 per 1k)",
       maxItems: 20,
-      companies: [companyLinkedInUrl],
-      searchQuery: "HR recruiter talent acquisition human resources recruitment people operations",
+      companies: [companyIdentity],
+      jobTitles: TARGET_JOB_TITLES,
+      searchQuery: "recruiter talent acquisition recruitment HR human resources people operations hiring",
       functionIds: ["12"],
       companyBatchMode: "one_by_one",
+      maxItemsPerCompany: 20,
       ...(companyWebsite ? { website: companyWebsite } : {}),
     }),
     cache: "no-store",
@@ -148,13 +166,16 @@ export async function enrichCompany(companyId: string, domain: string, companyNa
   );
 
   const normalizedDomain = resolved.domain || normalizeDomain(domain);
-  const companyLinkedInUrl = resolved.linkedinUrl;
-  if (!companyLinkedInUrl) {
-    console.warn(`Skipping HR contact enrichment for ${companyName || companyRow?.name || companyId}: no LinkedIn company URL`);
-    return { count: 0, skipped: true, reason: "missing_company_linkedin_url" };
+  const companyNameForSearch = companyName || text(companyRow?.name);
+  const companyIdentity = resolved.linkedinUrl || companyNameForSearch || (normalizedDomain ? `https://${normalizedDomain}` : "");
+  if (!companyIdentity) {
+    console.warn(`Skipping HR contact enrichment for ${companyId}: no company identity available`);
+    return { count: 0, skipped: true, reason: "missing_company_identity" };
   }
 
-  const items = await runActor(companyLinkedInUrl, normalizedDomain ? `https://${normalizedDomain}` : null);
+  // The HarvestAPI actor accepts company names as a fallback when a LinkedIn company URL
+  // cannot be resolved. Do not silently skip enrichment just because linkedin_url is null.
+  const items = await runActor(companyIdentity, normalizedDomain ? `https://${normalizedDomain}` : null);
   const leads = items.map(normalizeLead).filter((x): x is NonNullable<ReturnType<typeof normalizeLead>> => Boolean(x));
   const unique = Array.from(new Map(leads.map((lead) => [`${lead.email}|${lead.name}`.toLowerCase(), lead])).values());
   const ranked = unique.sort((a, b) => Number(PRIORITY_TITLE.test(b.title)) - Number(PRIORITY_TITLE.test(a.title))).slice(0, 5);
@@ -173,11 +194,11 @@ export async function enrichCompany(companyId: string, domain: string, companyNa
   await client.from("companies").update({
     domain: normalizedDomain || null,
     website: website || companyRow?.website || (normalizedDomain ? `https://${normalizedDomain}` : null),
-    linkedin_url: companyLinkedInUrl,
+    linkedin_url: resolved.linkedinUrl || companyRow?.linkedin_url || null,
     updated_at: new Date().toISOString(),
   }).eq("id", companyId);
 
-  return { count: ranked.length, skipped: false, domain: normalizedDomain, companyLinkedInUrl };
+  return { count: ranked.length, skipped: false, domain: normalizedDomain, companyLinkedInUrl: resolved.linkedinUrl || null };
 }
 
 function resolvedDomainUrl(domain: string) {
