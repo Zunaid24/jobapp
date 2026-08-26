@@ -1,0 +1,36 @@
+name: India job discovery
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run after midnight UTC so the 72-hour freshness window catches new Goa postings.
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install India job sources
+        run: |
+          python -m pip install --upgrade pip
+          pip install "git+https://github.com/vrunudar19/india-jobspy.git" requests
+
+      - name: Discover Goa jobs
+        env:
+          JOBAPP_INGEST_URL: ${{ secrets.JOBAPP_INGEST_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          JOB_FRESHNESS_HOURS: "72"
+          RESULTS_PER_QUERY: "20"
+        run: python scripts/india_job_ingest.py
