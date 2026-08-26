@@ -6,18 +6,21 @@ import hashlib
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pandas as pd
 import requests
 from india_jobspy.scrape import scrape_jobs
 
 QUERIES = ["HR Executive", "Human Resources", "HR Recruiter", "Talent Acquisition", "HR Coordinator"]
+SITES = ["naukri", "linkedin", "indeed"]
 
 
 def clean(value):
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        return value.isoformat()
     return str(value).strip() or None
 
 
@@ -32,7 +35,16 @@ def normalize(row: dict) -> dict | None:
         try: posted = pd.to_datetime(posted, utc=True).isoformat()
         except Exception: posted = None
     source_id = hashlib.sha256(url.lower().encode()).hexdigest()[:32]
-    return {"id": source_id, "source_job_id": source_id, "source": clean(row.get("site")) or "unknown", "title": title, "company": company, "location": "Goa", "type": clean(row.get("job_type")) or "Full-time", "description": (clean(row.get("description")) or "")[:30000], "apply_url": url, "posted_at": posted, "salary_min": row.get("min_amount"), "salary_max": row.get("max_amount"), "currency": clean(row.get("currency")) or "INR", "experience": clean(row.get("experience")), "raw": row}
+    return {
+        "id": source_id, "source_job_id": source_id,
+        "source": clean(row.get("site")) or "unknown", "title": title,
+        "company": company, "location": "Goa",
+        "type": clean(row.get("job_type")) or "Full-time",
+        "description": (clean(row.get("description")) or "")[:30000],
+        "apply_url": url, "posted_at": posted,
+        "salary_min": clean(row.get("min_amount")), "salary_max": clean(row.get("max_amount")),
+        "currency": clean(row.get("currency")) or "INR", "experience": clean(row.get("experience")),
+    }
 
 
 def main() -> int:
@@ -42,7 +54,7 @@ def main() -> int:
     collected: list[dict] = []; failures: list[str] = []
     for query in QUERIES:
         try:
-            frame = scrape_jobs(search_term=query, location="Goa", site_name=["naukri", "linkedin", "indeed"], results_wanted=results_per_query, hours_old=hours_old, linkedin_fetch_description=False, verbose=0)
+            frame = scrape_jobs(search_term=query, location="Goa", site_name=SITES, results_wanted=results_per_query, hours_old=hours_old, linkedin_fetch_description=False, verbose=0)
             for record in frame.to_dict(orient="records"):
                 job = normalize(record)
                 if job: collected.append(job)
@@ -50,7 +62,8 @@ def main() -> int:
             failures.append(f"{query}: {exc}")
     unique = {}
     for job in collected: unique.setdefault(job["id"], job)
-    response = requests.post(f"{endpoint}/api/internal/jobs/import", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json={"source": "india-jobspy", "collected_at": datetime.now(timezone.utc).isoformat(), "jobs": list(unique.values()), "failures": failures}, timeout=120)
+    payload = {"source": "india-jobspy", "collected_at": datetime.now(timezone.utc).isoformat(), "jobs": list(unique.values()), "failures": failures}
+    response = requests.post(f"{endpoint}/api/internal/jobs/import", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json=payload, timeout=120)
     if response.status_code >= 300:
         print(response.text, file=sys.stderr); return 1
     print(json.dumps({"scraped": len(collected), "unique": len(unique), "failures": failures, "result": response.json()}, indent=2)); return 0
