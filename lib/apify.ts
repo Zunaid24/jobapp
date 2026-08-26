@@ -3,9 +3,6 @@ import { createClient } from "@supabase/supabase-js";
 import { companyDomain, enrichCompany } from "@/lib/decision-makers";
 
 const ACTOR_ID = process.env.APIFY_ACTOR_ID || "0MLZsCqd5IlOf8ve3";
-
-// Search broadly enough to let the job scraper return HR roles, then apply a
-// stricter title/description gate before anything reaches Supabase.
 const HR_SEARCH_KEYWORD = "HR";
 const HR_JOB_TITLE = /\b(?:hr|human resources|recruit(?:er|ment)?|talent acquisition|talent management|people operations|people ops|people partner|staffing|resourcing)\b/i;
 const HR_ROLE_SIGNAL = /\b(?:executive|coordinator|associate|specialist|generalist|recruiter|recruitment|talent acquisition|human resources|hr|people operations|people ops|hr operations|hr admin|hr administrator)\b/i;
@@ -37,9 +34,6 @@ function isRelevantHrRole(title: string, description: string) {
   if (!titleText) return false;
   if (EXCLUDED_TITLE.test(titleText)) return false;
   if (HR_JOB_TITLE.test(titleText)) return true;
-  // Some postings use generic titles such as "Executive" or "Coordinator" and
-  // mention HR only in the responsibilities. Accept those only when the
-  // description contains a strong HR signal as well.
   const genericRole = /\b(?:executive|coordinator|associate|specialist|generalist)\b/i.test(titleText);
   return genericRole && HR_ROLE_SIGNAL.test(description);
 }
@@ -142,7 +136,6 @@ export async function refreshDailyJobs(options: { force?: boolean } = {}) {
   try {
     let input: Record<string, unknown> = { ...DEFAULT_INPUT };
     if (process.env.APIFY_INPUT_JSON) input = { ...input, ...(JSON.parse(process.env.APIFY_INPUT_JSON) as Record<string, unknown>) };
-    // Never allow a generic/empty production override to disable the HR search.
     input.keyword = HR_SEARCH_KEYWORD;
     input.location = "Goa";
     input.postedMaxDays = 7;
@@ -151,7 +144,7 @@ export async function refreshDailyJobs(options: { force?: boolean } = {}) {
     const items = await runActor(input);
     const normalized = items.map(normalize).filter((item): item is NonNullable<ReturnType<typeof normalize>> => Boolean(item));
     const deduped = Array.from(new Map(normalized.map((job) => [job.id, job])).values()).slice(0, 50);
-    const companyRows = Array.from(new Map(deduped.map((job) => [job.company_domain || job.company.toLowerCase(), job])).values());
+    const companyRows = Array.from(new Map(deduped.map((job) => [job.company.toLowerCase(), job])).values());
     const companyMap = new Map<string, string>();
 
     for (const job of companyRows) {
@@ -167,27 +160,24 @@ export async function refreshDailyJobs(options: { force?: boolean } = {}) {
       } else {
         await client.from("companies").update({ website: job.company_website, linkedin_url: job.company_linkedin_url, location: job.company_location, industry: job.company_industry, source: job.source, raw: job.raw, updated_at: new Date().toISOString() }).eq("id", companyId);
       }
-      companyMap.set(job.company_domain || job.company.toLowerCase(), companyId);
+      companyMap.set(job.company.toLowerCase(), companyId);
     }
 
-    const selected = deduped.map((job) => ({ id: job.id, title: job.title, company: job.company, location: job.location, type: job.type, match_score: job.match_score, description: job.description, apply_url: job.apply_url, contact_email: null, decision_maker_name: null, decision_maker_title: null, source: job.source, posted_at: job.posted_at, collected_on: today, company_id: companyMap.get(job.company_domain || job.company.toLowerCase()) || null, raw: job.raw }));
+    const selected = deduped.map((job) => ({ id: job.id, title: job.title, company: job.company, location: job.location, type: job.type, match_score: job.match_score, description: job.description, apply_url: job.apply_url, contact_email: null, decision_maker_name: null, decision_maker_title: null, source: job.source, posted_at: job.posted_at, collected_on: today, company_id: companyMap.get(job.company.toLowerCase()) || null, raw: job.raw }));
     if (selected.length) {
       const { error } = await client.from("jobs").upsert(selected, { onConflict: "id" });
       if (error) throw new Error(`Unable to store jobs: ${error.message}`);
     }
 
-    const uniqueCompanies = Array.from(new Map(deduped.map((job) => [job.company_domain || job.company.toLowerCase(), { job, companyId: companyMap.get(job.company_domain || job.company.toLowerCase())! }])).values());
+    const uniqueCompanies = Array.from(new Map(deduped.map((job) => [job.company.toLowerCase(), { job, companyId: companyMap.get(job.company.toLowerCase())! }])).values());
     let decisionMakerCount = 0;
     for (const { job, companyId } of uniqueCompanies) {
-      if (!companyId || !job.company_domain) {
-        console.warn(`Skipping decision-maker enrichment for ${job.company}: no verified company domain from the job posting.`);
-        continue;
-      }
+      if (!companyId) continue;
       try {
-        const result = await enrichCompany(companyId, job.company_domain);
+        const result = await enrichCompany(companyId, job.company_domain || "", job.company, job.company_website);
         decisionMakerCount += result.count;
       } catch (error) {
-        console.error(`Decision-maker enrichment failed for ${job.company} (${job.company_domain}):`, error);
+        console.error(`Decision-maker enrichment failed for ${job.company}:`, error);
       }
     }
 
