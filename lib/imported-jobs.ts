@@ -8,19 +8,22 @@ function text(...values: unknown[]) { return values.find(v => typeof v === "stri
 function db() { return createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { autoRefreshToken: false, persistSession: false } }); }
 function fingerprint(title: string, company: string, location: string) { return `${title}|${company}|${location}`.toLowerCase().replace(/\s+/g, " ").trim(); }
 function relevanceScore(job: { title: string; description: string }) {
-  const value = `${job.title} ${job.description}`.toLowerCase(); let score = 0;
-  if (/human resources|hr executive|hr manager|hr recruiter|hr coordinator|hr generalist|human resource/.test(value)) score += 75;
-  if (/talent acquisition|recruiter|recruitment|people operations|people & culture/.test(value)) score += 70;
-  if (/hr|human resources/.test(job.title.toLowerCase())) score += 15;
-  if (/admin/.test(job.title.toLowerCase())) score += 10;
-  return Math.min(100, score);
+  const title = job.title.toLowerCase(); const value = `${title} ${job.description}`.toLowerCase();
+  const positive = /(human resources|human resource|hr executive|hr manager|hr recruiter|hr coordinator|hr generalist|hrbp|talent acquisition|recruiter|recruitment|people operations|people & culture)/;
+  const adminHr = /(hr\s*[&+\/]?\s*admin|admin\s*[&+\/]?\s*hr)/;
+  const nonHr = /(billing|accountant|accounts|finance|sales|marketing|software|developer|engineer|nurse|doctor|purchase|procurement|front office|housekeeping|chef|kitchen|operations manager)/;
+  if (nonHr.test(title) && !positive.test(title)) return 0;
+  if (positive.test(title)) return 90;
+  if (adminHr.test(title)) return 75;
+  if (positive.test(value)) return 60;
+  return 0;
 }
 function normalize(row: IncomingJob) {
   const title = text(row.title), company = text(row.company), location = text(row.location), url = text(row.apply_url, row.job_url, row.url);
   if (!title || !company || !location || !url || !/\b(goa|panaji|panjim|margao|mapusa|vasco(?: da gama)?)\b/i.test(location)) return null;
   const source = text(row.source).toLowerCase(); if (!["linkedin", "indeed"].includes(source)) return null;
   const posted = text(row.posted_at); if (!posted) return null; const postedDate = new Date(posted); if (Number.isNaN(postedDate.getTime())) return null;
-  if (Date.now() - postedDate.getTime() > 72 * 60 * 60 * 1000 || postedDate.getTime() > Date.now() + 60 * 60 * 1000) return null;
+  if (Date.now() - postedDate.getTime() > 7 * 24 * 60 * 60 * 1000 || postedDate.getTime() > Date.now() + 60 * 60 * 1000) return null;
   const id = text(row.id, row.source_job_id) || createHash("sha256").update(url.toLowerCase()).digest("hex").slice(0, 32);
   return { id, source_job_id: text(row.source_job_id) || id, title, company, location: "Goa", type: text(row.type) || "Full-time", description: text(row.description).slice(0, 30000), apply_url: url, contact_email: null, decision_maker_name: null, decision_maker_title: null, source, posted_at: postedDate.toISOString(), company_website: null, company_domain: null, company_linkedin_url: null, company_location: location, company_industry: null, raw: row.raw ?? row };
 }
@@ -36,8 +39,7 @@ export async function importIndiaJobs(input: { jobs?: IncomingJob[]; failures?: 
   if (!fresh.length) return { received: unique.length, fresh: 0, accepted: 0, excludedSeen: unique.length, source: input.source || "india-jobspy" };
   let ranked: Array<{ id: string; decision?: string; score?: number }> = []; try { ranked = await rankNewJobs(fresh.slice(0, 100)); } catch { ranked = []; }
   const rankMap = new Map(ranked.map(r => [r.id, r]));
-  // Source, location and freshness are authoritative. AI only improves ordering; it can never erase a genuine fresh HR result.
-  const candidates = fresh.map(job => { const ai = rankMap.get(job.id); const deterministic = relevanceScore(job); return { job, score: Math.max(deterministic, ai?.score || 0) }; }).filter(x => x.score >= 50).sort((a, b) => b.score - a.score).slice(0, 50);
+  const candidates = fresh.map(job => { const ai = rankMap.get(job.id); const deterministic = relevanceScore(job); return { job, score: deterministic || (ai?.score || 0) }; }).filter(x => x.score >= 50).sort((a, b) => b.score - a.score).slice(0, 50);
   const selected = candidates.map(x => ({ ...x.job, match_score: x.score }));
   const companyMap = new Map<string, string>();
   for (const job of selected) {
