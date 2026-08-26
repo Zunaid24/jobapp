@@ -1,17 +1,17 @@
 import { createHash } from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
-const ACTOR_ID = process.env.APIFY_ACTOR_ID || "kindred_llama~job-scraper";
+const ACTOR_ID = process.env.APIFY_ACTOR_ID || "0MLZsCqd5IlOf8ve3";
 const DEFAULT_INPUT = {
-  keyword: process.env.APIFY_KEYWORD || "HR",
-  location: "",
+  keyword: null,
+  location: null,
   experience: 0,
-  maxResults: 10,
-  sources: ["LinkedIn", "Indeed", "SimplyHired", "Remotive", "RemoteOK", "Arbeitnow", "Jobicy"],
-  postedMaxDays: 7,
+  maxResults: 20,
+  sources: ["LinkedIn", "Indeed", "SimplyHired"],
+  postedMaxDays: 0,
   jobType: "Any",
   educationLevel: "Any",
-  skills: "HR, recruiting, talent acquisition, people operations",
+  skills: null,
 };
 
 type ApifyJob = Record<string, unknown>;
