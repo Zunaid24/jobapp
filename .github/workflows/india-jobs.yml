@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 env:
-  # Stable Vercel branch alias for the MVP branch. Production is still on main.
-  JOBAPP_INGEST_URL: https://jobapp-git-mvp-free-data-pipeline-xunayd786-9098s-projects.vercel.app
+  # Use production so GitHub Actions is not blocked by Vercel preview protection.
+  JOBAPP_INGEST_URL: https://jobappmuskan.vercel.app
 
 jobs:
   discover:
