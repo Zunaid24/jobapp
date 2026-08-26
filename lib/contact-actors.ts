@@ -32,7 +32,7 @@ function normalizePerson(row: Record<string, unknown>, companyName: string) {
   return { name, title, linkedin_url: linkedin, company: company || companyName, email: null as string | null, raw: row };
 }
 
-async function callActor(actorId: string, input: Record<string, unknown>, maxCharge = "0.80") {
+async function callActor(actorId: string, input: Record<string, unknown>, maxCharge = "0.10") {
   const token = required("APIFY_API_TOKEN");
   const endpoint = `https://api.apify.com/v2/actors/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?maxTotalChargeUsd=${maxCharge}`;
   const response = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(input), cache: "no-store" });
@@ -46,7 +46,7 @@ export async function findHrContacts(companyName: string, companyLinkedInUrl?: s
     companies: [identity],
     targetTitles: HR_TITLES,
     seniorityFilter: [],
-    maxItems: 50,
+    maxItems: 10,
     verifyProfiles: true,
     enrichEmails: false,
     findPersonalEmails: false,
@@ -54,7 +54,7 @@ export async function findHrContacts(companyName: string, companyLinkedInUrl?: s
     googlePages: 3,
     maxConcurrency: 10,
     cookies: [],
-  }, "1.00");
+  });
   const people = items.map(x => normalizePerson(x, companyName)).filter((x): x is NonNullable<ReturnType<typeof normalizePerson>> => Boolean(x));
   const unique = Array.from(new Map(people.map(p => [p.linkedin_url.toLowerCase(), p])).values());
   unique.sort((a, b) => Number(PRIORITY_RE.test(b.title)) - Number(PRIORITY_RE.test(a.title)) || a.name.localeCompare(b.name));
@@ -69,9 +69,9 @@ function extractEmail(row: Record<string, unknown>) {
 }
 
 export async function findEmails(linkedinUrls: string[]) {
-  const urls = Array.from(new Set(linkedinUrls.map(normalizeLinkedIn).filter(Boolean)));
+  const urls = Array.from(new Set(linkedinUrls.map(normalizeLinkedIn).filter(Boolean))).slice(0, 5);
   if (!urls.length) return [];
-  const items = await callActor(EMAIL_ACTOR, { urls }, "0.80");
+  const items = await callActor(EMAIL_ACTOR, { urls }, "0.10");
   return items.map(row => ({
     linkedin_url: normalizeLinkedIn(row.profileUrl ?? row.profile_url ?? row.linkedinUrl ?? row.linkedin_url ?? row.linkedin ?? row.url),
     email: extractEmail(row),
