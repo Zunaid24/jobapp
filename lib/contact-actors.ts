@@ -29,7 +29,12 @@ function db() { return createClient(required("NEXT_PUBLIC_SUPABASE_URL"), requir
 
 function normalizeLinkedIn(value: unknown) {
   const raw = text(value); if (!raw) return "";
-  try { const u = new URL(raw.includes("://") ? raw : `https://${raw}`); if (!/linkedin\.com$/i.test(u.hostname.replace(/^www\./, ""))) return ""; return `https://www.linkedin.com${u.pathname.replace(/\/$/, "")}`; } catch { return ""; }
+  try {
+    const u = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    if (!/linkedin\.com$/i.test(u.hostname.replace(/^www\./, ""))) return "";
+    const path = u.pathname.replace(/\/$/, "");
+    return `https://www.linkedin.com${path}`;
+  } catch { return ""; }
 }
 
 function normalizeCompany(value: unknown) {
@@ -62,20 +67,12 @@ function normalizePerson(row: Record<string, unknown>, companyName: string) {
   const last = text(row.lastName, row.last_name);
   const name = text(row.name, row.fullName, row.full_name, first && last ? `${first} ${last}` : "");
   const position = currentPosition(row);
-  // Never use a LinkedIn headline such as "HR|Vedanta|MBA" as proof that the
-  // person is an HR employee of the target company. Headlines are not current
-  // employment records and were the source of the false-positive contact.
   const title = text(row.jobTitle, row.job_title, row.currentJobTitle, row.current_job_title, position.title, row.position, row.role, row.title);
   const linkedin = normalizeLinkedIn(row.profileUrl ?? row.profile_url ?? row.linkedinUrl ?? row.linkedin_url ?? row.linkedin ?? row.url);
   const rowCompany = text(row.companyName, row.company_name, row.company, row.current_company, row.currentCompany);
   const currentCompany = position.company || rowCompany;
-
   if (!name || !title || !linkedin || !HR_RE.test(title)) return null;
-  // Actor 2 is expected to return employees of the requested company. If it
-  // supplies employer information, enforce it. Do not silently relabel an
-  // unrelated employee as belonging to the target company.
   if (!companyMatchesTarget(currentCompany, companyName)) return null;
-
   return { name, title, linkedin_url: linkedin, company: currentCompany, email: null as string | null, raw: row };
 }
 
@@ -87,9 +84,10 @@ async function callActor(actorId: string, input: Record<string, unknown>, maxCha
   try {
     const response = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(input), cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error(`Apify actor ${actorId} failed (${response.status}): ${(await response.text()).slice(0, 500)}`);
-    const data = await response.json(); return Array.isArray(data) ? data as Record<string, unknown>[] : [];
+    const data = await response.json();
+    return Array.isArray(data) ? data as Record<string, unknown>[] : [];
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw new Error(`HR contact lookup timed out after ${timeoutSeconds} seconds. Please try again.`);
+    if (error instanceof Error && error.name === "AbortError") throw new Error(`HR/contact lookup timed out after ${timeoutSeconds} seconds. Please try again.`);
     throw error;
   } finally { clearTimeout(timer); }
 }
@@ -97,18 +95,10 @@ async function callActor(actorId: string, input: Record<string, unknown>, maxCha
 export async function findHrContacts(companyName: string, companyLinkedInUrl?: string | null) {
   const identity = normalizeLinkedIn(companyLinkedInUrl) || companyName.trim();
   if (!identity) throw new Error("Company name is required for HR contact lookup.");
-
   const items = await callActor(EMPLOYEE_ACTOR, {
-    companies: [identity],
-    jobTitles: HR_TITLES,
-    maxItems: 10,
-    maxItemsPerCompany: 10,
-    companyBatchMode: "one_by_one",
-    profileScraperMode: "Full ($8 per 1k)",
-    takePages: 1,
-    startPage: 1,
+    companies: [identity], jobTitles: HR_TITLES, maxItems: 10, maxItemsPerCompany: 10,
+    companyBatchMode: "one_by_one", profileScraperMode: "Full ($8 per 1k)", takePages: 1, startPage: 1,
   }, "0.15", 90);
-
   const people = items.map(x => normalizePerson(x, companyName)).filter((x): x is NonNullable<ReturnType<typeof normalizePerson>> => Boolean(x));
   const unique = Array.from(new Map(people.map(p => [p.linkedin_url.toLowerCase(), p])).values());
   unique.sort((a, b) => Number(PRIORITY_RE.test(b.title)) - Number(PRIORITY_RE.test(a.title)) || a.name.localeCompare(b.name));
@@ -116,21 +106,51 @@ export async function findHrContacts(companyName: string, companyLinkedInUrl?: s
 }
 
 function extractEmail(row: Record<string, unknown>) {
-  const direct = text(row.email, row.workEmail, row.work_email, row.businessEmail, row.business_email, row.emailAddress).toLowerCase();
-  if (direct) return direct;
   const contact = row.contact_info && typeof row.contact_info === "object" ? row.contact_info as Record<string, unknown> : null;
-  return text(contact?.email, contact?.work_email, contact?.workEmail).toLowerCase();
+  const contactInfo = row.contactInfo && typeof row.contactInfo === "object" ? row.contactInfo as Record<string, unknown> : null;
+  const emails = Array.isArray(row.emails) ? row.emails : [];
+  const firstEmailObject = emails.find(x => typeof x === "object" && x !== null) as Record<string, unknown> | undefined;
+  return text(
+    row.email, row.workEmail, row.work_email, row.businessEmail, row.business_email, row.emailAddress,
+    row.email_address, row.emailFound && typeof row.emailFound === "string" ? row.emailFound : "",
+    contact?.email, contact?.work_email, contact?.workEmail,
+    contactInfo?.email, contactInfo?.work_email, contactInfo?.workEmail,
+    firstEmailObject?.email, firstEmailObject?.value
+  ).toLowerCase();
+}
+
+function resultLinkedIn(row: Record<string, unknown>) {
+  const nested = row.profile && typeof row.profile === "object" ? row.profile as Record<string, unknown> : null;
+  return normalizeLinkedIn(
+    row.profileUrl ?? row.profile_url ?? row.linkedinUrl ?? row.linkedin_url ?? row.linkedin ?? row.url ??
+    nested?.profileUrl ?? nested?.profile_url ?? nested?.linkedinUrl ?? nested?.linkedin_url ?? nested?.linkedin ?? nested?.url
+  );
 }
 
 export async function findEmails(linkedinUrls: string[]) {
   const urls = Array.from(new Set(linkedinUrls.map(normalizeLinkedIn).filter(Boolean))).slice(0, 5);
   if (!urls.length) return [];
-  const items = await callActor(EMAIL_ACTOR, { urls }, "0.15", 90);
+
+  // Different versions of the email-enrichment Actor have used profileUrls,
+  // linkedinUrls, and urls. Supplying the canonical profileUrls field plus
+  // the legacy aliases keeps the integration compatible while the output is
+  // normalized below. The actor must be explicitly told to perform email
+  // enrichment; otherwise some versions only scrape the LinkedIn profile.
+  const items = await callActor(EMAIL_ACTOR, {
+    profileUrls: urls,
+    linkedinUrls: urls,
+    urls,
+    findEmail: true,
+    includeEmail: true,
+    extractEmail: true,
+  }, "0.15", 90);
+
+  const requested = new Set(urls.map(u => u.toLowerCase()));
   return items.map(row => ({
-    linkedin_url: normalizeLinkedIn(row.profileUrl ?? row.profile_url ?? row.linkedinUrl ?? row.linkedin_url ?? row.linkedin ?? row.url),
+    linkedin_url: resultLinkedIn(row),
     email: extractEmail(row),
     raw: row,
-  })).filter(x => x.linkedin_url && x.email);
+  })).filter(x => x.linkedin_url && x.email && requested.has(x.linkedin_url.toLowerCase()));
 }
 
 export async function resolveCompanyLinkedIn(companyId: string) {
