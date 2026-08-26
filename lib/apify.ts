@@ -32,16 +32,20 @@ export async function refreshDailyJobs(options:{force?:boolean}={}){
  const {data:claimed,error:claimError}=await client.rpc("claim_daily_job_collection",{p_collection_date:today});if(claimError)throw new Error(`Unable to claim daily job collection: ${claimError.message}`);if(!claimed){const {count}=await client.from("jobs").select("id",{count:"exact",head:true}).eq("collected_on",today);return {skipped:true,itemCount:count??0};}
  try{
   const plan=await planDailyJobSearch();
+  const {data:history,error:historyError}=await client.from("jobs").select("id,title,company,location,apply_url").order("collected_on",{ascending:false}).limit(250);
+  if(historyError)throw new Error(`Unable to load job history: ${historyError.message}`);
+  const excludeJobs=(history||[]).map(j=>({id:j.id,title:j.title,company:j.company,location:j.location,url:j.apply_url}));
   let input:Record<string,unknown>={...DEFAULT_INPUT,maxResults:plan.maxResults,postedMaxDays:plan.postedMaxDays};
   if(process.env.APIFY_INPUT_JSON)input={...input,...JSON.parse(process.env.APIFY_INPUT_JSON) as Record<string,unknown>};
-  input.keyword="HR";input.location="Goa";input.postedMaxDays=plan.postedMaxDays;input.maxResults=Math.min(15,Math.max(10,plan.maxResults));input.skills=plan.roleQueries.join(", ");
+  input.keyword="HR";input.location="Goa";input.postedMaxDays=plan.postedMaxDays;input.maxResults=Math.min(15,Math.max(10,plan.maxResults));input.skills=plan.roleQueries.join(", ");input.excludeJobs=excludeJobs;
 
   const items=await runActor(input);
   const normalized=items.map(normalize).filter((x):x is NonNullable<ReturnType<typeof normalize>>=>Boolean(x));
   const candidateIds=Array.from(new Set(normalized.map(j=>j.id)));
   let seen=new Set<string>();
   if(candidateIds.length){const {data:existing,error}=await client.from("jobs").select("id").in("id",candidateIds);if(error)throw new Error(`Unable to check job history: ${error.message}`);seen=new Set((existing||[]).map(row=>row.id));}
-  const newJobs=Array.from(new Map(normalized.filter(j=>!seen.has(j.id)).map(j=>[j.id,j])).values()).slice(0,50);
+  const historyFingerprints=new Set(excludeJobs.map(j=>`${String(j.title||"").toLowerCase()}|${String(j.company||"").toLowerCase()}|${String(j.location||"").toLowerCase()}`));
+  const newJobs=Array.from(new Map(normalized.filter(j=>!seen.has(j.id)&&!historyFingerprints.has(`${j.title.toLowerCase()}|${j.company.toLowerCase()}|${j.location.toLowerCase()}`)).map(j=>[j.id,j])).values()).slice(0,50);
   const ranked=await rankNewJobs(newJobs);
   const rankMap=new Map(ranked.map(r=>[r.id,r]));
   const selected=newJobs.filter(j=>{const r=rankMap.get(j.id);return r?.decision==="KEEP"&&r.score>=70;}).sort((a,b)=>(rankMap.get(b.id)?.score||0)-(rankMap.get(a.id)?.score||0)).slice(0,10);
