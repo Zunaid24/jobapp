@@ -18,11 +18,45 @@ function normalizeDomain(value: string) {
   } catch { return ""; }
 }
 
-export function companyDomain(website?: string | null, applyUrl?: string | null) {
-  // Deliberately ignore applyUrl. Most job URLs are LinkedIn/Indeed URLs and
-  // using those as the company domain makes the second Actor search the job
-  // board instead of the employer.
+export function companyDomain(website?: string | null, _applyUrl?: string | null) {
+  // Never use a job-board URL as the employer domain. The decision-maker Actor
+  // needs the employer's own domain.
   return normalizeDomain(text(website));
+}
+
+export async function resolveCompanyDomain(companyName: string, website?: string | null) {
+  const direct = companyDomain(website);
+  if (direct) return direct;
+  const name = companyName.trim();
+  if (!name) return "";
+
+  try {
+    const response = await fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(name)}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) return "";
+    const data = await response.json();
+    if (!Array.isArray(data)) return "";
+
+    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const tokens = normalizedName.split(/\s+/).filter((token) => token.length > 2);
+    const candidate = data
+      .map((row) => ({ name: text(row?.name), domain: normalizeDomain(text(row?.domain)) }))
+      .filter((row) => row.domain)
+      .sort((a, b) => {
+        const score = (candidateName: string) => {
+          const n = candidateName.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+          return tokens.filter((token) => n.includes(token)).length;
+        };
+        return score(b.name) - score(a.name);
+      })[0];
+
+    return candidate?.domain || "";
+  } catch (error) {
+    console.warn(`Unable to resolve company domain for ${companyName}:`, error);
+    return "";
+  }
 }
 
 async function runActor(domain: string) {
@@ -57,14 +91,12 @@ function normalizeLead(row: Record<string, unknown>) {
   const linkedin = text(row.linkedin, row.linkedin_url, row.linkedinUrl, row.profileUrl, row.profile_url, row.linkedin_profile);
   const company = text(row.company, row.company_name, row.companyName, row.organization, row.organization_name);
 
-  // The actor is asked for HR decision makers, but keep this defensive check
-  // so a future actor build cannot store unrelated sales/marketing contacts.
   if (!name || !email || !HR_TITLE.test(title)) return null;
   return { name, title, email, linkedin_url: linkedin || null, raw: { ...row, normalized_company: company || null } };
 }
 
-export async function enrichCompany(companyId: string, domain: string) {
-  const normalizedDomain = normalizeDomain(domain);
+export async function enrichCompany(companyId: string, domain: string, companyName?: string, website?: string | null) {
+  const normalizedDomain = (await resolveCompanyDomain(companyName || "", domain || website || null)) || normalizeDomain(domain);
   if (!normalizedDomain) return { count: 0, skipped: true };
 
   const client = db();
@@ -85,8 +117,8 @@ export async function enrichCompany(companyId: string, domain: string) {
     if (error) throw new Error(`Unable to store decision makers: ${error.message}`);
   }
 
-  await client.from("companies").update({ updated_at: new Date().toISOString() }).eq("id", companyId);
-  return { count: ranked.length, skipped: false };
+  await client.from("companies").update({ domain: normalizedDomain, website: website || `https://${normalizedDomain}`, updated_at: new Date().toISOString() }).eq("id", companyId);
+  return { count: ranked.length, skipped: false, domain: normalizedDomain };
 }
 
 export function companyKey(name: string, domain: string) {
