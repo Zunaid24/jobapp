@@ -12,7 +12,6 @@ permissions:
   contents: read
 
 env:
-  # Use production so GitHub Actions is not blocked by Vercel preview protection.
   JOBAPP_INGEST_URL: https://jobappmuskan.vercel.app
 
 jobs:
