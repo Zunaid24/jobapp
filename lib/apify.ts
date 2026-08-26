@@ -40,8 +40,12 @@ async function runActor(input: Record<string, unknown>) {
   if (!response.ok) throw new Error(`Apify Actor failed (${response.status}): ${(await response.text()).slice(0, 500)}`);
   const data = await response.json(); return Array.isArray(data) ? data as ApifyJob[] : [];
 }
-export async function refreshDailyJobs() {
+export async function refreshDailyJobs(options: { force?: boolean } = {}) {
   const client = db(), today = new Date().toISOString().slice(0, 10);
+  if (options.force) {
+    const { error } = await client.from("job_collection_runs").delete().eq("collection_date", today);
+    if (error) throw new Error(`Unable to reset daily job collection: ${error.message}`);
+  }
   const { data: claimed, error: claimError } = await client.rpc("claim_daily_job_collection", { p_collection_date: today });
   if (claimError) throw new Error(`Unable to claim daily job collection: ${claimError.message}`);
   if (!claimed) { const { count } = await client.from("jobs").select("id", { count: "exact", head: true }).eq("collected_on", today); return { skipped: true, itemCount: count ?? 0 }; }
