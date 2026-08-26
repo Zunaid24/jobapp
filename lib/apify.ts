@@ -88,7 +88,7 @@ function normalize(job: ApifyJob) {
     company,
     location: "Goa",
     type: text(job.type, job.jobType, job.employmentType) || "Full-time",
-    match_score: 0,
+    match_score: HR_JOB_TITLE.test(title) ? 100 : 85,
     description: description.slice(0, 30000),
     apply_url: url || null,
     contact_email: null,
@@ -123,8 +123,10 @@ async function runActor(input: Record<string, unknown>) {
 export async function refreshDailyJobs(options: { force?: boolean } = {}) {
   const client = db(), today = new Date().toISOString().slice(0, 10);
   if (options.force) {
-    const { error } = await client.from("job_collection_runs").delete().eq("collection_date", today);
-    if (error) throw new Error(`Unable to reset daily job collection: ${error.message}`);
+    const { error: runDeleteError } = await client.from("job_collection_runs").delete().eq("collection_date", today);
+    if (runDeleteError) throw new Error(`Unable to reset daily job collection: ${runDeleteError.message}`);
+    const { error: jobsDeleteError } = await client.from("jobs").delete().eq("collected_on", today);
+    if (jobsDeleteError) throw new Error(`Unable to clear today's stale jobs: ${jobsDeleteError.message}`);
   }
   const { data: claimed, error: claimError } = await client.rpc("claim_daily_job_collection", { p_collection_date: today });
   if (claimError) throw new Error(`Unable to claim daily job collection: ${claimError.message}`);
