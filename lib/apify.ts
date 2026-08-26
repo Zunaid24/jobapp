@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 const ACTOR_ID = process.env.APIFY_ACTOR_ID || "0MLZsCqd5IlOf8ve3";
 const DEFAULT_INPUT = {
   keyword: "",
-  location: "",
+  location: "Goa",
   experience: 0,
   maxResults: 20,
   sources: ["LinkedIn", "Indeed", "SimplyHired"],
@@ -109,6 +109,9 @@ export async function refreshDailyJobs() {
       const configured = JSON.parse(process.env.APIFY_INPUT_JSON) as Record<string, unknown>;
       input = { ...input, ...configured };
     }
+
+    // This phase is Goa-only. Ignore any location supplied through Vercel configuration.
+    input.location = "Goa";
 
     // The selected Actor schema requires string values for these optional text inputs.
     // Treat null/undefined from Vercel configuration as empty strings rather than sending invalid JSON input.
