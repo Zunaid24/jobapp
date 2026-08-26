@@ -1,6 +1,9 @@
 name: India job discovery
 
 on:
+  push:
+    branches:
+      - mvp-free-data-pipeline
   workflow_dispatch:
   schedule:
     - cron: "17 2 * * *"
