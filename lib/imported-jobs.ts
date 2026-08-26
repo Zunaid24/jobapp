@@ -10,8 +10,13 @@ function fingerprint(title: string, company: string, location: string) { return 
 function normalize(row: IncomingJob) {
   const title = text(row.title), company = text(row.company), location = text(row.location), url = text(row.apply_url, row.job_url, row.url);
   if (!title || !company || !location || !url || !/\b(goa|panaji|panjim|margao|mapusa|vasco(?: da gama)?)\b/i.test(location)) return null;
+  const source = text(row.source).toLowerCase();
+  if (!["linkedin", "indeed"].includes(source)) return null;
+  const posted = text(row.posted_at); if (!posted) return null;
+  const postedDate = new Date(posted); if (Number.isNaN(postedDate.getTime())) return null;
+  if (Date.now() - postedDate.getTime() > 72 * 60 * 60 * 1000 || postedDate.getTime() > Date.now() + 60 * 60 * 1000) return null;
   const id = text(row.id, row.source_job_id) || createHash("sha256").update(url.toLowerCase()).digest("hex").slice(0, 32);
-  return { id, source_job_id: text(row.source_job_id) || id, title, company, location: "Goa", type: text(row.type) || "Full-time", description: text(row.description).slice(0, 30000), apply_url: url, contact_email: null, decision_maker_name: null, decision_maker_title: null, source: text(row.source) || "India job sources", posted_at: text(row.posted_at) || null, company_website: null, company_domain: null, company_linkedin_url: null, company_location: location, company_industry: null, raw: row.raw ?? row };
+  return { id, source_job_id: text(row.source_job_id) || id, title, company, location: "Goa", type: text(row.type) || "Full-time", description: text(row.description).slice(0, 30000), apply_url: url, contact_email: null, decision_maker_name: null, decision_maker_title: null, source, posted_at: postedDate.toISOString(), company_website: null, company_domain: null, company_linkedin_url: null, company_location: location, company_industry: null, raw: row.raw ?? row };
 }
 
 export async function importIndiaJobs(input: { jobs?: IncomingJob[]; failures?: string[]; source?: string }) {
@@ -26,7 +31,8 @@ export async function importIndiaJobs(input: { jobs?: IncomingJob[]; failures?: 
   if (!fresh.length) return { received: unique.length, fresh: 0, accepted: 0, excludedSeen: unique.length, source: input.source || "india-jobspy" };
   const ranked = await rankNewJobs(fresh.slice(0, 100));
   const rankMap = new Map(ranked.map(r => [r.id, r]));
-  const selected = fresh.filter(job => { const result = rankMap.get(job.id); return result?.decision === "KEEP" && result.score >= 70; }).sort((a, b) => (rankMap.get(b.id)?.score || 0) - (rankMap.get(a.id)?.score || 0)).slice(0, 50).map(job => ({ ...job, match_score: rankMap.get(job.id)?.score || 0 }));
+  // Ranking is advisory: the source/date/location gates above are authoritative. Select the best relevant roles, with a lower threshold so a transient AI over-rejection cannot erase genuine fresh jobs.
+  const selected = fresh.filter(job => { const result = rankMap.get(job.id); return result?.decision === "KEEP" && result.score >= 55; }).sort((a, b) => (rankMap.get(b.id)?.score || 0) - (rankMap.get(a.id)?.score || 0)).slice(0, 50).map(job => ({ ...job, match_score: rankMap.get(job.id)?.score || 0 }));
   const companyMap = new Map<string, string>();
   for (const job of selected) {
     const key = job.company.toLowerCase();
