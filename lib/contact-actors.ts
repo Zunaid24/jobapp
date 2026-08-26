@@ -2,13 +2,28 @@ import { createClient } from "@supabase/supabase-js";
 
 const EMPLOYEE_ACTOR = "u1EmtfXEWdmHmn4yW";
 const EMAIL_ACTOR = "bfH8Ermocz8oYKQVO";
+
+// LinkedIn's strict title filter is intentionally used here so Actor 2 only
+// retrieves HR/Talent people instead of pulling a large employee list first.
+// Keep broad title variants because companies use many naming conventions.
 const HR_TITLES = [
-  "Recruiter", "Talent Acquisition", "Talent Acquisition Specialist", "Talent Acquisition Partner",
-  "Talent Acquisition Manager", "Recruitment Manager", "HR Manager", "Human Resources Manager",
-  "HR Business Partner", "People Partner", "People Operations", "Head of HR", "Head of Talent",
-  "Talent Partner", "Hiring Manager", "Staffing", "Resourcing"
+  "Recruiter", "Technical Recruiter", "Corporate Recruiter", "Senior Recruiter", "Lead Recruiter",
+  "Talent Acquisition", "Talent Acquisition Specialist", "Talent Acquisition Partner", "Talent Acquisition Executive",
+  "Talent Acquisition Manager", "Talent Acquisition Lead", "Talent Acquisition Director", "Head of Talent Acquisition",
+  "Recruitment", "Recruitment Specialist", "Recruitment Executive", "Recruitment Manager", "Recruitment Lead",
+  "HR", "HR Executive", "HR Specialist", "HR Generalist", "HR Coordinator", "HR Officer", "HR Associate",
+  "HR Administrator", "HR Manager", "HR Lead", "HR Director", "Head of HR", "VP Human Resources",
+  "Vice President Human Resources", "Chief Human Resources Officer", "Human Resources", "Human Resources Executive",
+  "Human Resources Specialist", "Human Resources Generalist", "Human Resources Coordinator", "Human Resources Officer",
+  "Human Resources Manager", "Human Resources Lead", "Human Resources Director", "Head Human Resources",
+  "HR Business Partner", "Senior HR Business Partner", "HRBP", "People Business Partner", "People Partner",
+  "People Operations", "People Operations Specialist", "People Operations Manager", "People Operations Lead",
+  "People & Culture", "People and Culture", "People Manager", "Head of People", "Director of People",
+  "Head of Talent", "Talent Manager", "Talent Partner", "Talent Management", "Talent Management Manager",
+  "Hiring Manager", "Staffing", "Staffing Manager", "Resourcing", "Resourcing Manager"
 ];
-const HR_RE = /\b(hr|human resources|recruiter|recruiting|recruitment|talent acquisition|talent management|talent partner|people operations|people ops|people partner|hr business partner|staffing|resourcing|hiring manager|people & culture|people and culture)\b/i;
+
+const HR_RE = /\b(hr|human resources|recruiter|recruiting|recruitment|talent acquisition|talent management|talent partner|people operations|people ops|people partner|people business partner|hr business partner|staffing|resourcing|hiring manager|people & culture|people and culture)\b/i;
 const PRIORITY_RE = /\b(recruiter|talent acquisition|recruitment|hr manager|human resources manager|hr business partner|people partner|people operations|head of hr|head of talent|talent partner|hiring manager)\b/i;
 
 function required(name: string) { const value = process.env[name]; if (!value) throw new Error(`Missing environment variable: ${name}`); return value; }
@@ -22,6 +37,7 @@ function normalizeLinkedIn(value: unknown) {
 
 function firstPositionTitle(row: Record<string, unknown>) {
   const positions = row.currentPosition ?? row.currentPositions ?? row.current_position ?? row.current_positions;
+  if (typeof positions === "string") return positions.trim();
   if (Array.isArray(positions)) {
     for (const position of positions) {
       if (position && typeof position === "object") {
@@ -48,7 +64,7 @@ function normalizePerson(row: Record<string, unknown>, companyName: string) {
   return { name, title, linkedin_url: linkedin, company: company || companyName, email: null as string | null, raw: row };
 }
 
-async function callActor(actorId: string, input: Record<string, unknown>, maxCharge = "0.10", timeoutSeconds = 90) {
+async function callActor(actorId: string, input: Record<string, unknown>, maxCharge = "0.15", timeoutSeconds = 90) {
   const token = required("APIFY_API_TOKEN");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), (timeoutSeconds + 10) * 1000);
@@ -73,10 +89,13 @@ export async function findHrContacts(companyName: string, companyLinkedInUrl?: s
     maxItems: 10,
     maxItemsPerCompany: 10,
     companyBatchMode: "one_by_one",
-    profileScraperMode: "Short ($4 per 1k)",
+    // Full mode exposes the current-position title reliably. Short mode can
+    // return currentPosition with only companyName, which made valid HR
+    // profiles fail our title validation and produced an empty UI list.
+    profileScraperMode: "Full ($8 per 1k)",
     takePages: 1,
     startPage: 1,
-  }, "0.10", 90);
+  }, "0.15", 90);
 
   const people = items.map(x => normalizePerson(x, companyName)).filter((x): x is NonNullable<ReturnType<typeof normalizePerson>> => Boolean(x));
   const unique = Array.from(new Map(people.map(p => [p.linkedin_url.toLowerCase(), p])).values());
@@ -94,7 +113,7 @@ function extractEmail(row: Record<string, unknown>) {
 export async function findEmails(linkedinUrls: string[]) {
   const urls = Array.from(new Set(linkedinUrls.map(normalizeLinkedIn).filter(Boolean))).slice(0, 5);
   if (!urls.length) return [];
-  const items = await callActor(EMAIL_ACTOR, { urls }, "0.10", 90);
+  const items = await callActor(EMAIL_ACTOR, { urls }, "0.15", 90);
   return items.map(row => ({
     linkedin_url: normalizeLinkedIn(row.profileUrl ?? row.profile_url ?? row.linkedinUrl ?? row.linkedin_url ?? row.linkedin ?? row.url),
     email: extractEmail(row),
