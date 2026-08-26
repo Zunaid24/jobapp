@@ -1,7 +1,9 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createSessionId, getSessionCookieName } from "@/lib/gmail";
+import { refreshDailyJobs } from "@/lib/apify";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 function db() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -10,30 +12,44 @@ function db() {
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 }
 
-async function session() {
-  const store = await cookies();
-  let id = store.get(getSessionCookieName())?.value;
-  if (!id) id = createSessionId();
-  return { id, isNew: !store.get(getSessionCookieName()) };
-}
-
-const jobs = [
-  { id: "hr-manager-company-name", title: "HR Manager", company: "Company Name", location: "Goa", type: "Full-time", match: 87, description: "Lead HR operations, employee engagement, hiring and people processes for a growing team." },
-  { id: "people-operations-remote-company", title: "People Operations Specialist", company: "Remote Company", location: "Remote", type: "Full-time", match: 84, description: "Own people operations, onboarding, employee support and HR process improvements for a distributed team." },
-  { id: "talent-acquisition-goa-startup", title: "Talent Acquisition Executive", company: "Goa Startup", location: "Goa", type: "Full-time", match: 81, description: "Manage sourcing, candidate screening, interview coordination and hiring operations." },
-  { id: "hr-business-partner-remote", title: "HR Business Partner", company: "Global Remote Co", location: "Remote", type: "Full-time", match: 79, description: "Partner with managers on people strategy, performance and employee experience." },
-  { id: "recruiter-remote", title: "Technical Recruiter", company: "Remote Labs", location: "Remote", type: "Contract", match: 76, description: "Source and assess candidates for international technology roles." },
-];
-
 export async function GET(request: Request) {
   try {
-    const { id, isNew } = await session();
-    const url = new URL(request.url);
-    const location = url.searchParams.get("location") === "Remote" ? "Remote" : "Goa";
-    const list = jobs.filter((job) => job.location === location).slice(0, location === "Remote" ? 20 : 50);
-    const response = NextResponse.json({ jobs: list, remoteDailyLimit: 20 });
-    if (isNew) response.cookies.set(getSessionCookieName(), id, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
-    return response;
+    const location = new URL(request.url).searchParams.get("location") === "Remote" ? "Remote" : "Goa";
+    const today = new Date().toISOString().slice(0, 10);
+    const client = db();
+
+    let { data: jobs, error } = await client
+      .from("jobs")
+      .select("id,title,company,location,type,match_score,description,apply_url,contact_email,posted_at,source")
+      .eq("location", location)
+      .eq("collected_on", today)
+      .order("match_score", { ascending: false })
+      .limit(location === "Remote" ? 20 : 50);
+
+    if (error) throw error;
+
+    if (!jobs?.length) {
+      const { data: run } = await client.from("job_collection_runs").select("status").eq("collection_date", today).maybeSingle();
+      if (!run) {
+        await refreshDailyJobs();
+        const refreshed = await client
+          .from("jobs")
+          .select("id,title,company,location,type,match_score,description,apply_url,contact_email,posted_at,source")
+          .eq("location", location)
+          .eq("collected_on", today)
+          .order("match_score", { ascending: false })
+          .limit(location === "Remote" ? 20 : 50);
+        jobs = refreshed.data ?? [];
+        error = refreshed.error;
+      }
+    }
+
+    if (error) throw error;
+    return NextResponse.json({
+      jobs: (jobs ?? []).map((job) => ({ ...job, match: job.match_score ?? 0 })),
+      remoteDailyLimit: 20,
+      collectedOn: today,
+    });
   } catch (error) {
     console.error("Jobs endpoint failed", error);
     return NextResponse.json({ error: "Unable to load jobs" }, { status: 500 });
