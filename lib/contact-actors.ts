@@ -20,11 +20,28 @@ function normalizeLinkedIn(value: unknown) {
   try { const u = new URL(raw.includes("://") ? raw : `https://${raw}`); if (!/linkedin\.com$/i.test(u.hostname.replace(/^www\./, ""))) return ""; return `https://www.linkedin.com${u.pathname.replace(/\/$/, "")}`; } catch { return ""; }
 }
 
+function firstPositionTitle(row: Record<string, unknown>) {
+  const positions = row.currentPosition ?? row.currentPositions ?? row.current_position ?? row.current_positions;
+  if (Array.isArray(positions)) {
+    for (const position of positions) {
+      if (position && typeof position === "object") {
+        const p = position as Record<string, unknown>;
+        const title = text(p.position, p.jobTitle, p.job_title, p.title, p.role, p.headline);
+        if (title) return title;
+      }
+    }
+  }
+  return "";
+}
+
 function normalizePerson(row: Record<string, unknown>, companyName: string) {
   const first = text(row.firstName, row.first_name);
   const last = text(row.lastName, row.last_name);
   const name = text(row.name, row.fullName, row.full_name, first && last ? `${first} ${last}` : "");
-  const title = text(row.jobTitle, row.job_title, row.title, row.headline, row.position, row.role, row.currentJobTitle, row.current_job_title);
+  const title = text(
+    row.jobTitle, row.job_title, row.title, row.headline, row.position, row.role,
+    row.currentJobTitle, row.current_job_title, firstPositionTitle(row)
+  );
   const linkedin = normalizeLinkedIn(row.profileUrl ?? row.profile_url ?? row.linkedinUrl ?? row.linkedin_url ?? row.linkedin ?? row.url);
   const company = text(row.companyName, row.company_name, row.company, row.current_company, row.currentCompany);
   if (!name || !title || !linkedin || !HR_RE.test(title)) return null;
@@ -47,9 +64,6 @@ async function callActor(actorId: string, input: Record<string, unknown>, maxCha
 }
 
 export async function findHrContacts(companyName: string, companyLinkedInUrl?: string | null) {
-  // Prefer a verified LinkedIn company URL, but do not block HR lookup when the
-  // job source did not provide one. The employee Actor supports company-name
-  // fallback, which is preferable to failing the user's job flow.
   const identity = normalizeLinkedIn(companyLinkedInUrl) || companyName.trim();
   if (!identity) throw new Error("Company name is required for HR contact lookup.");
 
@@ -59,7 +73,7 @@ export async function findHrContacts(companyName: string, companyLinkedInUrl?: s
     maxItems: 10,
     maxItemsPerCompany: 10,
     companyBatchMode: "one_by_one",
-    profileScraperMode: "Short",
+    profileScraperMode: "Short ($4 per 1k)",
     takePages: 1,
     startPage: 1,
   }, "0.10", 90);
