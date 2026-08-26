@@ -30,6 +30,6 @@ jobs:
       - name: Discover fresh Goa jobs
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          JOB_FRESHNESS_HOURS: "72"
+          JOB_FRESHNESS_HOURS: "168"
           RESULTS_PER_QUERY: "20"
         run: python scripts/india_job_ingest.py
