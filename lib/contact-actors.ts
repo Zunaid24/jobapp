@@ -3,9 +3,6 @@ import { createClient } from "@supabase/supabase-js";
 const EMPLOYEE_ACTOR = "u1EmtfXEWdmHmn4yW";
 const EMAIL_ACTOR = "bfH8Ermocz8oYKQVO";
 
-// LinkedIn's strict title filter is intentionally used here so Actor 2 only
-// retrieves HR/Talent people instead of pulling a large employee list first.
-// Keep broad title variants because companies use many naming conventions.
 const HR_TITLES = [
   "Recruiter", "Technical Recruiter", "Corporate Recruiter", "Senior Recruiter", "Lead Recruiter",
   "Talent Acquisition", "Talent Acquisition Specialist", "Talent Acquisition Partner", "Talent Acquisition Executive",
@@ -35,33 +32,51 @@ function normalizeLinkedIn(value: unknown) {
   try { const u = new URL(raw.includes("://") ? raw : `https://${raw}`); if (!/linkedin\.com$/i.test(u.hostname.replace(/^www\./, ""))) return ""; return `https://www.linkedin.com${u.pathname.replace(/\/$/, "")}`; } catch { return ""; }
 }
 
-function firstPositionTitle(row: Record<string, unknown>) {
+function normalizeCompany(value: unknown) {
+  return text(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function companyMatchesTarget(value: unknown, target: string) {
+  const actual = normalizeCompany(value);
+  const expected = normalizeCompany(target);
+  if (!actual || !expected) return false;
+  return actual === expected || actual.includes(expected) || expected.includes(actual);
+}
+
+function currentPosition(row: Record<string, unknown>) {
   const positions = row.currentPosition ?? row.currentPositions ?? row.current_position ?? row.current_positions;
-  if (typeof positions === "string") return positions.trim();
-  if (Array.isArray(positions)) {
-    for (const position of positions) {
-      if (position && typeof position === "object") {
-        const p = position as Record<string, unknown>;
-        const title = text(p.position, p.jobTitle, p.job_title, p.title, p.role, p.headline);
-        if (title) return title;
-      }
-    }
+  const list = Array.isArray(positions) ? positions : positions ? [positions] : [];
+  for (const position of list) {
+    if (typeof position === "string") continue;
+    if (!position || typeof position !== "object") continue;
+    const p = position as Record<string, unknown>;
+    const title = text(p.position, p.jobTitle, p.job_title, p.title, p.role);
+    const company = text(p.companyName, p.company_name, p.company, p.currentCompany, p.current_company);
+    if (title || company) return { title, company };
   }
-  return "";
+  return { title: "", company: "" };
 }
 
 function normalizePerson(row: Record<string, unknown>, companyName: string) {
   const first = text(row.firstName, row.first_name);
   const last = text(row.lastName, row.last_name);
   const name = text(row.name, row.fullName, row.full_name, first && last ? `${first} ${last}` : "");
-  const title = text(
-    row.jobTitle, row.job_title, row.title, row.headline, row.position, row.role,
-    row.currentJobTitle, row.current_job_title, firstPositionTitle(row)
-  );
+  const position = currentPosition(row);
+  // Never use a LinkedIn headline such as "HR|Vedanta|MBA" as proof that the
+  // person is an HR employee of the target company. Headlines are not current
+  // employment records and were the source of the false-positive contact.
+  const title = text(row.jobTitle, row.job_title, row.currentJobTitle, row.current_job_title, position.title, row.position, row.role, row.title);
   const linkedin = normalizeLinkedIn(row.profileUrl ?? row.profile_url ?? row.linkedinUrl ?? row.linkedin_url ?? row.linkedin ?? row.url);
-  const company = text(row.companyName, row.company_name, row.company, row.current_company, row.currentCompany);
+  const rowCompany = text(row.companyName, row.company_name, row.company, row.current_company, row.currentCompany);
+  const currentCompany = position.company || rowCompany;
+
   if (!name || !title || !linkedin || !HR_RE.test(title)) return null;
-  return { name, title, linkedin_url: linkedin, company: company || companyName, email: null as string | null, raw: row };
+  // Actor 2 is expected to return employees of the requested company. If it
+  // supplies employer information, enforce it. Do not silently relabel an
+  // unrelated employee as belonging to the target company.
+  if (!companyMatchesTarget(currentCompany, companyName)) return null;
+
+  return { name, title, linkedin_url: linkedin, company: currentCompany, email: null as string | null, raw: row };
 }
 
 async function callActor(actorId: string, input: Record<string, unknown>, maxCharge = "0.15", timeoutSeconds = 90) {
@@ -89,9 +104,6 @@ export async function findHrContacts(companyName: string, companyLinkedInUrl?: s
     maxItems: 10,
     maxItemsPerCompany: 10,
     companyBatchMode: "one_by_one",
-    // Full mode exposes the current-position title reliably. Short mode can
-    // return currentPosition with only companyName, which made valid HR
-    // profiles fail our title validation and produced an empty UI list.
     profileScraperMode: "Full ($8 per 1k)",
     takePages: 1,
     startPage: 1,
