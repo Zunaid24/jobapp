@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { refreshDailyJobs } from "@/lib/apify";
+import { refreshDailyJobs } from "@/lib/job-sources";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
