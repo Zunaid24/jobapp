@@ -47,8 +47,11 @@ async function callActor(actorId: string, input: Record<string, unknown>, maxCha
 }
 
 export async function findHrContacts(companyName: string, companyLinkedInUrl?: string | null) {
-  const identity = normalizeLinkedIn(companyLinkedInUrl);
-  if (!identity) throw new Error(`Company LinkedIn URL is required for HR contact lookup. Could not resolve LinkedIn for ${companyName}.`);
+  // Prefer a verified LinkedIn company URL, but do not block HR lookup when the
+  // job source did not provide one. The employee Actor supports company-name
+  // fallback, which is preferable to failing the user's job flow.
+  const identity = normalizeLinkedIn(companyLinkedInUrl) || companyName.trim();
+  if (!identity) throw new Error("Company name is required for HR contact lookup.");
 
   const items = await callActor(EMPLOYEE_ACTOR, {
     companies: [identity],
