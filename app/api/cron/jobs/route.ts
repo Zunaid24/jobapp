@@ -13,14 +13,13 @@ const ROLES = [
   "People Operations Coordinator", "HR Compliance", "HR Recruiter", "Human Resources Support Specialist",
   "HR Support Center Coordinator", "Senior Human Resources Generalist"
 ];
-
 const SOURCE_KEYS = ["linkedin", "indeed", "foundit", "naukri"] as const;
 const GOA = /\b(goa|panaji|panjim|margao|mapusa|vasco(?: da gama)?|calangute|porvorim|verna|bardez|anjuna|candolim|betalbatim|mobor|taleigao)\b/i;
 
 type SearchResult = { title: string; url: string; context: string };
-type ZenserpResponse = { organic?: Array<{ title?: string; url?: string; destination?: string; description?: string; position?: number }> };
+type ZenserpResponse = { organic?: Array<{ title?: string; url?: string; destination?: string; description?: string }> };
 
-function strip(value: string) { return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(); }
+function strip(value: string) { return value.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim(); }
 function sourceFor(url: string) {
   const lower = url.toLowerCase();
   if (/linkedin\.com\/jobs/i.test(lower)) return "linkedin";
@@ -49,7 +48,7 @@ async function zenserpSearch(query: string): Promise<SearchResult[]> {
   const key = process.env.ZENSERP_API_KEY;
   if (!key) throw new Error("ZENSERP_API_KEY is not configured");
   const params = new URLSearchParams({ q: query, engine: "google", location: "Goa,India", gl: "in", hl: "en", num: "100" });
-  const response = await fetch(`https://app.zenserp.com/api/v2/search?${params.toString()}`, { headers: { apikey: key, Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(12000) });
+  const response = await fetch(`https://app.zenserp.com/api/v2/search?${params.toString()}`, { headers: { apikey: key, Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(10000) });
   const body = await response.text();
   if (!response.ok) throw new Error(`Zenserp ${response.status}: ${body.slice(0, 300)}`);
   const data = JSON.parse(body) as ZenserpResponse;
@@ -60,33 +59,45 @@ async function zenserpSearch(query: string): Promise<SearchResult[]> {
   });
 }
 
-function extractJinaLinks(markdown: string): SearchResult[] {
-  const out: SearchResult[] = [];
-  for (const line of markdown.split(/\r?\n/)) {
-    for (const match of line.matchAll(/\[([^\]]{3,260})\]\((https?:\/\/[^)\s]+)\)/g)) {
-      const url = match[2];
-      if (!sourceFor(url)) continue;
-      out.push({ title: strip(match[1]), url, context: strip(line) });
-    }
-  }
-  return out;
+function decodeHtml(value: string) {
+  return value.replace(/&amp;/g, "&").replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 
-async function jinaSearch(query: string, engine: "google" | "bing"): Promise<SearchResult[]> {
-  const base = engine === "google" ? "https://www.google.com/search" : "https://www.bing.com/search";
-  const target = `${base}?${new URLSearchParams({ q: query, count: "20", num: "20", hl: "en" }).toString()}`;
-  const response = await fetch(`https://r.jina.ai/${target}`, { headers: { Accept: "text/markdown", "User-Agent": "jobapp-discovery/1.0" }, cache: "no-store", signal: AbortSignal.timeout(12000) });
-  if (!response.ok) throw new Error(`Jina ${engine} ${response.status}`);
-  return extractJinaLinks(await response.text()).slice(0, 20);
+async function duckDuckGoSearch(query: string): Promise<SearchResult[]> {
+  const url = `https://html.duckduckgo.com/html/?${new URLSearchParams({ q: query, kl: "in-en", no_html: "1" }).toString()}`;
+  const response = await fetch(url, {
+    headers: {
+      Accept: "text/html,application/xhtml+xml",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+      "Accept-Language": "en-IN,en;q=0.9",
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new Error(`DuckDuckGo ${response.status}`);
+  const html = await response.text();
+  const out: SearchResult[] = [];
+  const anchor = /<a[^>]*class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(anchor)) {
+    const href = decodeHtml(match[1]);
+    const title = strip(match[2]);
+    let destination = href;
+    try {
+      const parsed = new URL(href, "https://html.duckduckgo.com");
+      destination = parsed.searchParams.get("uddg") || href;
+    } catch {}
+    if (/^https?:\/\//i.test(destination) && sourceFor(destination)) out.push({ title, url: destination, context: title });
+  }
+  return out.slice(0, 30);
 }
 
 async function publicSearch(queries: string[]): Promise<{ results: SearchResult[]; failures: string[] }> {
   const failures: string[] = [];
-  const settled = await Promise.allSettled(queries.flatMap(query => [jinaSearch(query, "google"), jinaSearch(query, "bing")]));
+  const settled = await Promise.allSettled(queries.map(query => duckDuckGoSearch(query)));
   const results: SearchResult[] = [];
   for (const item of settled) {
     if (item.status === "fulfilled") results.push(...item.value);
-    else failures.push(`public-search: ${item.reason instanceof Error ? item.reason.message : String(item.reason)}`);
+    else failures.push(`duckduckgo: ${item.reason instanceof Error ? item.reason.message : String(item.reason)}`);
   }
   return { results, failures };
 }
@@ -96,27 +107,17 @@ async function discover() {
   const after = cutoff.toISOString().slice(0, 10);
   const failures: string[] = [];
   const sourceCounts: Record<string, number> = Object.fromEntries(SOURCE_KEYS.map(s => [s, 0]));
-
-  const roleGroups = [
-    ["HR Coordinator", "HR Executive", "Human Resources Officer"],
-    ["HR Operations", "HR Operations Specialist", "People & Culture Executive"],
-    ["HR Onboarding", "Onboarding Specialist", "Employee Lifecycle"],
-    ["Recruitment Coordinator", "Talent Acquisition Specialist", "Recruitment Operations"],
-    ["HRIS Analyst", "HR Administrator", "HR Assistant"],
-    ["People Operations Coordinator", "HR Compliance", "HR Recruiter"],
-    ["Human Resources Support Specialist", "HR Support Center Coordinator", "Senior Human Resources Generalist"],
+  const query = `("HR Coordinator" OR "HR Executive" OR "Human Resources Officer" OR "HR Operations" OR "Talent Acquisition" OR "Recruitment Coordinator" OR "HRIS Analyst") (site:linkedin.com/jobs OR site:indeed.com OR site:foundit.in OR site:naukri.com) (Goa OR Panaji OR Panjim OR Margao OR Mapusa OR Vasco) after:${after}`;
+  const publicQueries = [
+    `("HR Coordinator" OR "HR Executive" OR "Human Resources Officer" OR "HR Operations") (site:linkedin.com/jobs OR site:indeed.com OR site:foundit.in OR site:naukri.com) Goa after:${after}`,
+    `("Talent Acquisition" OR "Recruitment Coordinator" OR "Recruitment Operations") (site:linkedin.com/jobs OR site:indeed.com OR site:foundit.in OR site:naukri.com) Goa after:${after}`,
+    `("HRIS Analyst" OR "HR Administrator" OR "HR Assistant" OR "People Operations") (site:linkedin.com/jobs OR site:indeed.com OR site:foundit.in OR site:naukri.com) Goa after:${after}`,
+    `("Human Resources" OR "People & Culture" OR "HR Recruiter") (site:linkedin.com/jobs OR site:indeed.com OR site:foundit.in OR site:naukri.com) Goa after:${after}`,
   ];
-  const siteGroups = [
-    "site:linkedin.com/jobs",
-    "site:indeed.com",
-    "site:foundit.in",
-    "site:naukri.com",
-  ];
-  const publicQueries = roleGroups.flatMap(group => siteGroups.map(site => `(${group.map(role => `\"${role}\"`).join(" OR ")}) ${site} (Goa OR Panaji OR Panjim OR Margao OR Mapusa OR Vasco) after:${after}`));
 
   let results: SearchResult[] = [];
   try {
-    results = await zenserpSearch(`(${ROLES.map(role => `\"${role}\"`).join(" OR ")}) (site:linkedin.com/jobs OR site:indeed.com OR site:foundit.in OR site:naukri.com) (Goa OR Panaji OR Panjim OR Margao OR Mapusa OR Vasco) after:${after}`);
+    results = await zenserpSearch(query);
   } catch (error) {
     failures.push(`zenserp: ${error instanceof Error ? error.message : String(error)}`);
     const fallback = await publicSearch(publicQueries);
