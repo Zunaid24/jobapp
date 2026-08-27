@@ -22,8 +22,12 @@ function companyFrom(title: string, text: string) { const clean=strip(title).rep
 type SearchResult={title:string;url:string;context:string};
 function keepResult(title:string,url:string,context:string,source:{key:string;sites:string[]}) { return /^https?:\/\//i.test(url) && source.sites.some(s=>url.toLowerCase().includes(s)) && !!title; }
 function extractGoogleResults(html: string, source: {key:string;sites:string[]}) {
-  const out:SearchResult[]=[]; const h3Re=/<h3[^>]*>([\s\S]*?)<\/h3>/gi; let match:RegExpExecArray|null;
-  while((match=h3Re.exec(html)) !== null){ const start=Math.max(0,match.index-12000), end=Math.min(html.length,match.index+12000), block=html.slice(start,end); const anchors=[...block.matchAll(/<a[^>]+href\s*=\s*["']([^"']+)["'][^>]*>/gi)]; const url=anchors.map(a=>absoluteUrl(a[1])).find(u=>u&&keepResult(strip(match[1]),u,strip(block),source))||null; if(!url) continue; const title=strip(match[1]),context=strip(block); if(!out.some(x=>x.url===url)) out.push({title,url,context}); }
+  const out:SearchResult[]=[]; const h3Re=/<h3[^>]*>([\s\S]*?)<\/h3>/gi;
+  while(true){
+    const match=h3Re.exec(html);
+    if(match===null) break;
+    const start=Math.max(0,match.index-12000), end=Math.min(html.length,match.index+12000), block=html.slice(start,end); const anchors=[...block.matchAll(/<a[^>]+href\s*=\s*["']([^"']+)["'][^>]*>/gi)]; const url=anchors.map(a=>absoluteUrl(a[1])).find(u=>u&&keepResult(strip(match[1]),u,strip(block),source))||null; if(!url) continue; const title=strip(match[1]),context=strip(block); if(!out.some(x=>x.url===url)) out.push({title,url,context});
+  }
   return out.slice(0,30);
 }
 function extractBingResults(html: string, source: {key:string;sites:string[]}) { const out:SearchResult[]=[]; const re=/<li\b[^>]*class=["'][^"']*b_algo[^"']*["'][\s\S]*?<\/li>/gi; let m:RegExpExecArray|null; while((m=re.exec(html))){ const block=m[0],a=block.match(/<h2[^>]*>\s*<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i); if(!a) continue; const url=absoluteUrl(a[1]),title=strip(a[2]),context=strip(block); if(url&&keepResult(title,url,context,source)&&!out.some(x=>x.url===url)) out.push({title,url,context}); } return out.slice(0,30); }
