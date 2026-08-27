@@ -5,7 +5,9 @@ from urllib.parse import quote_plus, urlparse, parse_qs
 import requests
 from bs4 import BeautifulSoup
 BOARDS={"linkedin":"linkedin.com/jobs/","naukri":"naukri.com/job-listings","foundit":"foundit.in/job","indeed":"indeed.com/viewjob"}
-QUERIES=['site:linkedin.com/jobs/ "HR" Goa','site:naukri.com/job-listings "HR" Goa','site:foundit.in/job "HR" Goa','site:indeed.com/viewjob "HR" Goa']
+ROLES=["Human Resources","HR Executive","HR Recruiter","HR Manager","Talent Acquisition","Recruitment","HR Coordinator","People Operations"]
+BOARDS_Q=list(BOARDS.values())
+QUERIES=[f'site:{domain} "{role}" Goa' for domain in BOARDS_Q for role in ROLES]
 DATE_RE=re.compile(r"\b(\d+)\s+(minute|minutes|hour|hours|day|days)\s+ago\b",re.I)
 def _posted(text):
     m=DATE_RE.search(text or "")
