@@ -29,12 +29,13 @@ def normalize(row,max_age_hours):
     return {"id":sid,"source_job_id":sid,"source":source,"title":title,"company":company,"location":"Goa","type":clean(row.get("job_type",row.get("type"))) or "Full-time","description":(clean(row.get("description")) or "")[:30000],"apply_url":url,"posted_at":posted_dt.isoformat()}
 def main():
     endpoint=os.environ["JOBAPP_INGEST_URL"].rstrip("/");secret=os.environ["CRON_SECRET"];hours_old=int(os.getenv("JOB_FRESHNESS_HOURS","168"));results_per_query=int(os.getenv("RESULTS_PER_QUERY","20"));collected=[];failures=[];source_counts={s:0 for s in sorted(ALLOWED_SOURCES)};google_counts={s:0 for s in sorted(ALLOWED_SOURCES)}
-    try:
-        frame=scrape_jobs(site_name=SITES,search_term=QUERIES,location="Goa, India",distance=50,results_wanted=results_per_query,hours_old=hours_old,country_indeed="India",linkedin_fetch_description=False,verbose=1)
-        for record in frame.to_dict(orient="records"):
-            job=normalize(record,hours_old)
-            if job:collected.append(job);source_counts[job["source"]]+=1
-    except Exception as exc:failures.append(f"jobspy: {type(exc).__name__}: {exc}")
+    for query in QUERIES:
+        try:
+            frame=scrape_jobs(site_name=SITES,search_term=query,location="Goa, India",distance=50,results_wanted=results_per_query,hours_old=hours_old,country_indeed="India",linkedin_fetch_description=False,verbose=1)
+            for record in frame.to_dict(orient="records"):
+                job=normalize(record,hours_old)
+                if job:collected.append(job);source_counts[job["source"]]+=1
+        except Exception as exc:failures.append(f"jobspy[{query}]: {type(exc).__name__}: {exc}")
     for name,fn in (("foundit",scrape_foundit),("naukri",scrape_naukri)):
         try:
             for raw in fn():
@@ -52,5 +53,5 @@ def main():
     payload={"source":"india-multi-source","collected_at":datetime.now(timezone.utc).isoformat(),"jobs":jobs,"failures":failures}
     response=requests.post(f"{endpoint}/api/internal/jobs/import",headers={"Authorization":f"Bearer {secret}","Content-Type":"application/json"},json=payload,timeout=120)
     if response.status_code>=300:print(response.text,file=sys.stderr);return 1
-    print(json.dumps({"discovered":len(jobs),"unique":len(unique),"source_counts":source_counts,"google_index_counts":google_counts,"failures":failures,"result":response.json()},indent=2));return 0
+    result=response.json(); print(json.dumps({"discovered":len(jobs),"unique":len(unique),"source_counts":source_counts,"google_index_counts":google_counts,"failures":failures,"result":result},indent=2)); return 0 if not failures else 1
 if __name__=="__main__":raise SystemExit(main())
