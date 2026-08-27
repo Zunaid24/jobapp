@@ -3,7 +3,7 @@ name: India job discovery
 on:
   push:
     branches:
-      - mvp-free-data-pipeline
+      - main
   workflow_dispatch:
   schedule:
     - cron: "17 2 * * *"
@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: mvp-free-data-pipeline
+          ref: main
           fetch-depth: 1
       - name: Verify checked-out revision
         run: |
@@ -40,6 +40,6 @@ jobs:
       - name: Discover fresh Goa jobs
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          JOB_FRESHNESS_HOURS: "168"
+          JOB_FRESHNESS_HOURS: "360"
           RESULTS_PER_QUERY: "20"
         run: python scripts/india_job_ingest.py
