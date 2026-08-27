@@ -112,9 +112,6 @@ async function discover() {
   const failures: string[] = [];
   const sourceCounts: Record<string, number> = Object.fromEntries(SOURCE_KEYS.map(s => [s, 0]));
 
-  // One high-recall SERP request per discovery run keeps the free Zenserp allowance
-  // sustainable while asking Google for up to 100 organic results. Zenserp returns
-  // structured organic results, so Vercel no longer has to scrape Google's HTML.
   const roleQuery = ROLES.map(role => `"${role}"`).join(" OR ");
   const sites = SOURCE_DOMAINS.map(domain => `site:${domain}`).join(" OR ");
   const query = `(${roleQuery}) (${sites}) (Goa OR Panaji OR Panjim OR Margao OR Mapusa OR Vasco) after:${after}`;
@@ -124,8 +121,6 @@ async function discover() {
     results = await zenserpSearch(query);
   } catch (error) {
     failures.push(`zenserp: ${error instanceof Error ? error.message : String(error)}`);
-    // Keep the public fallback for environments where the Zenserp key has not yet
-    // been added. Once ZENSERP_API_KEY is configured, Zenserp is always primary.
     try { results = await fallbackJinaSearch(query); }
     catch (fallbackError) { failures.push(`jina: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`); }
   }
@@ -160,9 +155,6 @@ async function discover() {
     sourceCounts[source]++;
   }
 
-  // If the single high-recall query produced too few board results, spend one
-  // additional request on a shorter query. This is still bounded and prevents a
-  // broad daily search from burning the free monthly allowance.
   if (discovered.length < 5 && process.env.ZENSERP_API_KEY) {
     try {
       const fallbackQuery = `(\"HR Coordinator\" OR \"HR Executive\" OR \"Human Resources\" OR \"Talent Acquisition\") (site:linkedin.com/jobs OR site:indeed.com OR site:foundit.in OR site:naukri.com) Goa after:${after}`;
@@ -196,16 +188,25 @@ export async function runGoaDiscovery() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase server configuration is missing");
   const client = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data: state } = await client.from("job_discovery_state").select("last_started_at").eq("id", true).maybeSingle();
+  const { data: state } = await client.from("job_discovery_state").select("last_started_at,last_result").eq("id", true).maybeSingle();
   const last = state?.last_started_at ? new Date(state.last_started_at).getTime() : 0;
-  if (Date.now() - last < 6 * 60 * 60 * 1000) return { skipped: true, reason: "discovery ran within the last 6 hours" };
+  const lastResult = (state?.last_result || null) as { discovered?: number } | null;
+  const lastDiscovered = Number(lastResult?.discovered || 0);
+
+  // Do not suppress retries when the previous run found nothing. A zero-result
+  // run is a transient source/search failure candidate, so the next app request
+  // should get another chance even inside the normal six-hour throttle window.
+  if (Date.now() - last < 6 * 60 * 60 * 1000 && lastDiscovered > 0) {
+    return { skipped: true, reason: "discovery ran within the last 6 hours" };
+  }
+
   await client.from("job_discovery_state").upsert({ id: true, last_started_at: new Date().toISOString() });
   try {
     const result = await discover();
     await client.from("job_discovery_state").update({ last_finished_at: new Date().toISOString(), last_result: result }).eq("id", true);
     return result;
   } catch (error) {
-    await client.from("job_discovery_state").update({ last_finished_at: new Date().toISOString(), last_result: { error: String(error) } }).eq("id", true);
+    await client.from("job_discovery_state").update({ last_finished_at: new Date().toISOString(), last_result: { error: String(error), discovered: 0 } }).eq("id", true);
     throw error;
   }
 }
