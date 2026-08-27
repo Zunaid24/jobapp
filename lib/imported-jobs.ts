@@ -39,7 +39,7 @@ export async function importIndiaJobs(input: { jobs?: IncomingJob[]; failures?: 
   if (!fresh.length) return { received: unique.length, fresh: 0, accepted: 0, excludedSeen: unique.length, source: input.source || "india-multi-source" };
   let ranked: Array<{ id: string; decision?: string; score?: number }> = []; try { ranked = await rankNewJobs(fresh.slice(0, 100)); } catch { ranked = []; }
   const rankMap = new Map(ranked.map(r => [r.id, r]));
-  const candidates = fresh.map(job => { const ai = rankMap.get(job.id); const deterministic = relevanceScore(job); return { job, score: deterministic || (ai?.score || 0) }; }).filter(x => x.score >= 40).sort((a, b) => b.score - a.score).slice(0, 50);
+  const candidates = fresh.map(job => { const deterministic = relevanceScore(job); const ai = rankMap.get(job.id); const score = deterministic >= 40 ? Math.max(deterministic, ai?.score || 0) : (ai?.score || 0); return { job, score }; }).filter(x => x.score >= 40).sort((a, b) => b.score - a.score).slice(0, 50);
   const selected = candidates.map(x => ({ ...x.job, match_score: x.score }));
   const companyMap = new Map<string, string>();
   for (const job of selected) {

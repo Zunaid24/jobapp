@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 type Job = { id: string; title: string; company: string; location: string; type: string; description?: string | null; apply_url?: string | null; posted_at?: string | null; source?: string | null };
 type Ranked = { id: string; score: number; decision: "KEEP" | "REJECT"; reasons: string[] };
 
-const MODEL = (process.env.GEMINI_JOB_MODEL || "gemini-2.5-flash-lite").replace(/^models\//, "");
+const MODEL = process.env.GEMINI_JOB_MODEL || "gemini-2.5-flash-lite";
 function required(name: string) { const value = process.env[name]; if (!value) throw new Error(`Missing environment variable: ${name}`); return value; }
 function db() { return createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { autoRefreshToken: false, persistSession: false } }); }
 
@@ -12,22 +12,11 @@ async function gemini(prompt: string, schema: Record<string, unknown>) {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
     body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1, responseMimeType: "application/json", responseSchema: schema } }),
   });
-  if (!response.ok) { const detail = await response.text().catch(() => ""); throw new Error(`Gemini job controller failed (${response.status}): ${detail.slice(0, 500)}`); }
+  if (!response.ok) throw new Error(`Gemini job controller failed (${response.status})`);
   const data = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error("Gemini job controller returned no content");
   return JSON.parse(text) as Record<string, unknown>;
-}
-
-function heuristicRank(jobs: Job[]): Ranked[] {
-  return jobs.map(job => {
-    const text = `${job.title} ${job.description || ""}`.toLowerCase(); const title = job.title.toLowerCase(); let score = 45;
-    if (/hr executive|hr coordinator|hr recruiter|talent acquisition/.test(title)) score += 35;
-    else if (/human resources|recruit|recruiter|talent/.test(title)) score += 20; else if (/hr|human resource/.test(text)) score += 10;
-    if (/goa|panaji|panjim|margao|mapusa|vasco/.test(text)) score += 10;
-    if (/manager|director|head of|vp|vice president/.test(title)) score -= 20;
-    return { id: job.id, score: Math.max(0, Math.min(100, score)), decision: score >= 70 ? "KEEP" : "REJECT", reasons: ["MVP fallback relevance ranking"] };
-  });
 }
 
 export async function planDailyJobSearch() {
@@ -42,8 +31,6 @@ export async function rankNewJobs(jobs: Job[]) {
   const { data: profile } = await db().from("candidate_profiles").select("name,experience,skills").order("updated_at", { ascending: false }).limit(1).maybeSingle();
   const compact = jobs.map(j => ({ id: j.id, title: j.title, company: j.company, location: j.location, type: j.type, posted_at: j.posted_at, description: (j.description || "").slice(0, 6000) }));
   const prompt = `You are the final relevance and quality gate for a Goa-only HR job search. Candidate profile: ${JSON.stringify(profile || {})}. Keep ONLY genuinely suitable NEW jobs for this candidate. Hard requirements: Goa location; HR Executive, HR Coordinator, HR Recruiter, Talent Acquisition or closely equivalent recruiting/HR coordination roles; reject unrelated HR roles, wrong locations, obvious duplicates, and jobs whose stated experience is clearly incompatible. Prefer jobs that match the candidate's experience and skills. Score 0-100. Return one decision per supplied job ID. Jobs: ${JSON.stringify(compact)}`;
-  try {
-    const result = await gemini(prompt, { type: "object", properties: { results: { type: "array", items: { type: "object", properties: { id: { type: "string" }, score: { type: "integer" }, decision: { type: "string", enum: ["KEEP", "REJECT"] }, reasons: { type: "array", items: { type: "string" } } }, required: ["id", "score", "decision", "reasons"] } } }, required: ["results"] });
-    return Array.isArray(result.results) ? result.results.map((x: any) => ({ id: String(x.id), score: Math.max(0, Math.min(100, Number(x.score) || 0)), decision: x.decision === "KEEP" ? "KEEP" : "REJECT", reasons: Array.isArray(x.reasons) ? x.reasons.slice(0, 3).map(String) : [] })).filter(x => jobs.some(j => j.id === x.id)) : heuristicRank(jobs);
-  } catch (error) { console.warn("Gemini ranking unavailable; using MVP heuristic fallback", error); return heuristicRank(jobs); }
+  const result = await gemini(prompt, { type: "object", properties: { results: { type: "array", items: { type: "object", properties: { id: { type: "string" }, score: { type: "integer" }, decision: { type: "string", enum: ["KEEP", "REJECT"] }, reasons: { type: "array", items: { type: "string" } } }, required: ["id", "score", "decision", "reasons"] } } }, required: ["results"] });
+  return Array.isArray(result.results) ? result.results.map((x: any) => ({ id: String(x.id), score: Math.max(0, Math.min(100, Number(x.score) || 0)), decision: x.decision === "KEEP" ? "KEEP" : "REJECT", reasons: Array.isArray(x.reasons) ? x.reasons.slice(0, 3).map(String) : [] })).filter(x => jobs.some(j => j.id === x.id)) : [];
 }

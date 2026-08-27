@@ -1,0 +1,45 @@
+name: India job discovery
+
+on:
+  push:
+    branches:
+      - mvp-free-data-pipeline
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: read
+
+env:
+  JOBAPP_INGEST_URL: https://jobappmuskan.vercel.app
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mvp-free-data-pipeline
+          fetch-depth: 1
+      - name: Verify checked-out revision
+        run: |
+          echo "ref=$GITHUB_REF"
+          echo "sha=$GITHUB_SHA"
+          git rev-parse HEAD
+          git log -1 --oneline
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install multi-source discovery
+        run: |
+          python -m pip install --upgrade pip
+          pip install -U python-jobspy requests beautifulsoup4 playwright
+          python -m playwright install chromium --with-deps
+      - name: Discover fresh Goa jobs
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          JOB_FRESHNESS_HOURS: "168"
+          RESULTS_PER_QUERY: "20"
+        run: python scripts/india_job_ingest.py

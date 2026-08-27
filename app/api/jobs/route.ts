@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { refreshDailyJobs } from "@/lib/apify";
+import { refreshDailyJobs } from "@/lib/job-sources";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -17,6 +17,6 @@ export async function GET(request: Request) {
       if (!run || run.status === "failed") { await refreshDailyJobs(); const refreshed = await client.from("jobs").select(SELECT).eq("location", location).eq("collected_on", today).order("posted_at", { ascending: false, nullsFirst: false }).limit(50); jobs = refreshed.data ?? []; error = refreshed.error; }
     }
     if (error) throw error;
-    return NextResponse.json({ jobs: (jobs ?? []).map((job) => ({ ...job, match: job.match_score ?? 0, company_details: null, decision_makers: [] })), remoteDailyLimit: 20, collectedOn: today });
-  } catch (error) { console.error("Jobs endpoint failed", error); return NextResponse.json({ error: "Unable to load jobs" }, { status: 500 }); }
+    return NextResponse.json({ jobs: (jobs ?? []).map((job) => ({ ...job, match: job.match_score ?? 0, company_details: null, decision_makers: [] })), remoteDailyLimit: 20, collectedOn: today, source: "Jobvetta" });
+  } catch (error) { console.error("Jobs endpoint failed", error); return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load jobs" }, { status: 500 }); }
 }
