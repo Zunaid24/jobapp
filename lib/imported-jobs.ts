@@ -7,35 +7,28 @@ function required(name: string) { const value = process.env[name]; if (!value) t
 function text(...values: unknown[]) { return values.find(v => typeof v === "string" && v.trim())?.toString().trim() || ""; }
 function db() { return createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { autoRefreshToken: false, persistSession: false } }); }
 function fingerprint(title: string, company: string, location: string) { return `${title}|${company}|${location}`.toLowerCase().replace(/\s+/g, " ").trim(); }
-
-// Deterministic title gate: AI must never turn a non-HR job into an HR job.
-// This is intentionally title-first because descriptions frequently mention HR
-// systems, teams, or generic "human resources" terms even when the actual role is not HR.
 function relevanceScore(job: { title: string; description: string }) {
   const title = job.title.toLowerCase();
   const value = `${title} ${job.description}`.toLowerCase();
-  const positiveTitle = /(human resources|human resource|\bhr\b|hris|hr executive|hr manager|hr recruiter|hr coordinator|hr generalist|hrbp|talent acquisition|recruiter|recruitment|people operations|people & culture|employee relations)/;
+  const positiveTitle = /(human resources|human resource|\bhr\b|hris|hr executive|hr manager|hr recruiter|hr coordinator|hr generalist|hrbp|talent acquisition|recruiter|recruitment|people operations|people & culture|employee relations|hr officer|hr assistant|hr administrator|hr operations|onboarding specialist|recruitment operations)/;
   const adminHrTitle = /(hr\s*[&+\/]?\s*admin|admin\s*[&+\/]?\s*hr)/;
   const explicitNonHrTitle = /(billing|accountant|accounts|finance|sales|marketing|software|developer|engineer|nurse|doctor|purchase|procurement|front office|guest service|housekeeping|chef|kitchen|food & beverage|customer service|customer support|facilities|security guard|video editor|social media|reels|event executive|events executive|client intake|operations & care|technical trainer)/;
-
   if (explicitNonHrTitle.test(title) && !positiveTitle.test(title)) return 0;
   if (positiveTitle.test(title)) return 90;
   if (adminHrTitle.test(title)) return 75;
-  // Description-only HR mentions are advisory context, never an acceptance signal.
   if (positiveTitle.test(value)) return 0;
   return 0;
 }
-
 function normalize(row: IncomingJob) {
   const title = text(row.title), company = text(row.company), location = text(row.location), url = text(row.apply_url, row.job_url, row.url);
   if (!title || !company || !location || !url || !/\b(goa|panaji|panjim|margao|mapusa|vasco(?: da gama)?)\b/i.test(location)) return null;
   const source = text(row.source).toLowerCase(); if (!["linkedin", "indeed", "foundit", "naukri"].includes(source)) return null;
   const posted = text(row.posted_at); if (!posted) return null; const postedDate = new Date(posted); if (Number.isNaN(postedDate.getTime())) return null;
-  if (Date.now() - postedDate.getTime() > 7 * 24 * 60 * 60 * 1000 || postedDate.getTime() > Date.now() + 60 * 60 * 1000) return null;
+  const freshnessHours = Number(process.env.JOB_FRESHNESS_HOURS || 360);
+  if (Date.now() - postedDate.getTime() > freshnessHours * 60 * 60 * 1000 || postedDate.getTime() > Date.now() + 60 * 60 * 1000) return null;
   const id = text(row.id, row.source_job_id) || createHash("sha256").update(url.toLowerCase()).digest("hex").slice(0, 32);
   return { id, source_job_id: text(row.source_job_id) || id, title, company, location: "Goa", type: text(row.type) || "Full-time", description: text(row.description).slice(0, 30000), apply_url: url, contact_email: null, decision_maker_name: null, decision_maker_title: null, source, posted_at: postedDate.toISOString(), company_website: null, company_domain: null, company_linkedin_url: null, company_location: location, company_industry: null, raw: row.raw ?? row };
 }
-
 export async function importIndiaJobs(input: { jobs?: IncomingJob[]; failures?: string[]; source?: string }) {
   const client = db();
   const incoming = (input.jobs || []).map(normalize).filter((x): x is NonNullable<ReturnType<typeof normalize>> => Boolean(x));
@@ -47,9 +40,7 @@ export async function importIndiaJobs(input: { jobs?: IncomingJob[]; failures?: 
   if (!fresh.length) return { received: unique.length, fresh: 0, accepted: 0, excludedSeen: unique.length, source: input.source || "india-multi-source" };
   let ranked: Array<{ id: string; decision?: string; score?: number }> = []; try { ranked = await rankNewJobs(fresh.slice(0, 100)); } catch { ranked = []; }
   const rankMap = new Map(ranked.map(r => [r.id, r]));
-  // Deterministic relevance is the hard gate. AI can only increase the score of
-  // an already-relevant HR title; it can never rescue a non-HR title.
-  const candidates = fresh.map(job => { const deterministic = relevanceScore(job); const ai = rankMap.get(job.id); const score = deterministic >= 40 ? Math.max(deterministic, ai?.score || 0) : 0; return { job, score, deterministic }; }).filter(x => x.deterministic >= 40 && x.score >= 40).sort((a, b) => b.score - a.score).slice(0, 50);
+  const candidates = fresh.map(job => { const deterministic = relevanceScore(job); const ai = rankMap.get(job.id); const score = deterministic >= 40 ? Math.max(deterministic, ai?.score || 0) : 0; return { job, score, deterministic }; }).filter(x => x.deterministic >= 40 && x.score >= 40).sort((a, b) => b.score - a.score).slice(0, 100);
   const selected = candidates.map(x => ({ ...x.job, match_score: x.score }));
   const companyMap = new Map<string, string>();
   for (const job of selected) {
