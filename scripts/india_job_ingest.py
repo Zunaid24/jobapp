@@ -40,16 +40,21 @@ def normalize(row: dict, max_age_hours: int) -> dict | None:
 def main() -> int:
     endpoint=os.environ["JOBAPP_INGEST_URL"].rstrip("/"); secret=os.environ["CRON_SECRET"]
     hours_old=int(os.getenv("JOB_FRESHNESS_HOURS","168")); results_per_query=int(os.getenv("RESULTS_PER_QUERY","20"))
-    collected=[]; failures=[]
+    collected=[]; failures=[]; source_counts={s:0 for s in sorted(ALLOWED_SOURCES)}
     try:
         for query in QUERIES:
             frame=scrape_jobs(site_name=SITES,search_term=query,location="Goa, India",distance=50,results_wanted=results_per_query,hours_old=hours_old,country_indeed="India",linkedin_fetch_description=False,verbose=1)
             for record in frame.to_dict(orient="records"):
                 job=normalize(record,hours_old)
-                if job: collected.append(job)
+                if job:
+                    collected.append(job); source_counts[job["source"]]=source_counts.get(job["source"],0)+1
     except Exception as exc: failures.append(f"jobspy: {type(exc).__name__}: {exc}")
     for name, fn in (("foundit",scrape_foundit),("naukri",scrape_naukri)):
-        try: collected.extend([j for j in fn() if j and normalize(j,hours_old)])
+        try:
+            for raw in fn():
+                job=normalize(raw,hours_old)
+                if job:
+                    collected.append(job); source_counts[name]+=1
         except Exception as exc: failures.append(f"{name}: {type(exc).__name__}: {exc}")
     unique={}
     for job in collected: unique.setdefault(job["id"],job)
@@ -57,5 +62,6 @@ def main() -> int:
     payload={"source":"india-multi-source","collected_at":datetime.now(timezone.utc).isoformat(),"jobs":jobs,"failures":failures}
     response=requests.post(f"{endpoint}/api/internal/jobs/import",headers={"Authorization":f"Bearer {secret}","Content-Type":"application/json"},json=payload,timeout=120)
     if response.status_code>=300: print(response.text,file=sys.stderr); return 1
-    print(json.dumps({"discovered":len(jobs),"unique":len(unique),"failures":failures,"result":response.json()},indent=2)); return 0
+    result=response.json()
+    print(json.dumps({"discovered":len(jobs),"unique":len(unique),"source_counts":source_counts,"failures":failures,"result":result},indent=2)); return 0
 if __name__=="__main__": raise SystemExit(main())
