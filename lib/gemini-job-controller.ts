@@ -3,7 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 type Job = { id: string; title: string; company: string; location: string; type: string; description?: string | null; apply_url?: string | null; posted_at?: string | null; source?: string | null };
 type Ranked = { id: string; score: number; decision: "KEEP" | "REJECT"; reasons: string[] };
 
-const MODEL = process.env.GEMINI_JOB_MODEL || "gemini-2.5-flash-lite";
+// Gemini 2.5 Flash-Lite was retired for new users. Keep the model configurable,
+// but use the current stable low-cost production model by default.
+const MODEL = process.env.GEMINI_JOB_MODEL || "gemini-3.5-flash-lite";
 function required(name: string) { const value = process.env[name]; if (!value) throw new Error(`Missing environment variable: ${name}`); return value; }
 function db() { return createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { autoRefreshToken: false, persistSession: false } }); }
 
@@ -12,7 +14,10 @@ async function gemini(prompt: string, schema: Record<string, unknown>) {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
     body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1, responseMimeType: "application/json", responseSchema: schema } }),
   });
-  if (!response.ok) throw new Error(`Gemini job controller failed (${response.status})`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Gemini job controller failed (${response.status}): ${detail.slice(0, 1000)}`);
+  }
   const data = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error("Gemini job controller returned no content");
@@ -23,7 +28,7 @@ export async function planDailyJobSearch() {
   const { data: profile } = await db().from("candidate_profiles").select("name,experience,skills").order("updated_at", { ascending: false }).limit(1).maybeSingle();
   const prompt = `You are the cost controller for a job-search app. The candidate is seeking NEW jobs in Goa only. Target roles are HR Executive, HR Coordinator, HR Recruiter, Talent Acquisition, Talent Acquisition Specialist and closely equivalent HR recruiting roles. Use the candidate profile to choose the smallest useful search configuration. Never broaden to unrelated HR management roles unless clearly compatible with the experience. The absolute job ceiling is 50, but the normal target is 10 high-quality jobs. Keep the Actor request small: prefer 10-15 results, never above 20. Candidate: ${JSON.stringify(profile || {})}`;
   const result = await gemini(prompt, { type: "object", properties: { keyword: { type: "string" }, location: { type: "string" }, maxResults: { type: "integer" }, postedMaxDays: { type: "integer" }, roleQueries: { type: "array", items: { type: "string" } } }, required: ["keyword", "location", "maxResults", "postedMaxDays", "roleQueries"] });
-  return { keyword: "HR", location: "Goa", maxResults: Math.min(20, Math.max(10, Number(result.maxResults) || 12)), postedMaxDays: Math.min(7, Math.max(1, Number(result.postedMaxDays) || 2)), roleQueries: Array.isArray(result.roleQueries) ? result.roleQueries.slice(0, 6).map(String) : [] };
+  return { keyword: "HR", location: "Goa", maxResults: Math.min(20, Math.max(10, Number(result.maxResults) || 12)), postedMaxDays: Math.min(15, Math.max(1, Number(result.postedMaxDays) || 7)), roleQueries: Array.isArray(result.roleQueries) ? result.roleQueries.slice(0, 6).map(String) : [] };
 }
 
 export async function rankNewJobs(jobs: Job[]) {
