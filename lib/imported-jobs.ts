@@ -7,17 +7,25 @@ function required(name: string) { const value = process.env[name]; if (!value) t
 function text(...values: unknown[]) { return values.find(v => typeof v === "string" && v.trim())?.toString().trim() || ""; }
 function db() { return createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { autoRefreshToken: false, persistSession: false } }); }
 function fingerprint(title: string, company: string, location: string) { return `${title}|${company}|${location}`.toLowerCase().replace(/\s+/g, " ").trim(); }
+
+// Deterministic title gate: AI must never turn a non-HR job into an HR job.
+// This is intentionally title-first because descriptions frequently mention HR
+// systems, teams, or generic "human resources" terms even when the actual role is not HR.
 function relevanceScore(job: { title: string; description: string }) {
-  const title = job.title.toLowerCase(); const value = `${title} ${job.description}`.toLowerCase();
-  const positive = /(human resources|human resource|hr executive|hr manager|hr recruiter|hr coordinator|hr generalist|hrbp|talent acquisition|recruiter|recruitment|people operations|people & culture)/;
-  const adminHr = /(hr\s*[&+\/]?\s*admin|admin\s*[&+\/]?\s*hr)/;
-  const nonHr = /(billing|accountant|accounts|finance|sales|marketing|software|developer|engineer|nurse|doctor|purchase|procurement|front office|housekeeping|chef|kitchen|operations manager)/;
-  if (nonHr.test(title) && !positive.test(title)) return 0;
-  if (positive.test(title)) return 90;
-  if (adminHr.test(title)) return 75;
-  if (positive.test(value)) return 60;
+  const title = job.title.toLowerCase();
+  const value = `${title} ${job.description}`.toLowerCase();
+  const positiveTitle = /(human resources|human resource|\bhr\b|hris|hr executive|hr manager|hr recruiter|hr coordinator|hr generalist|hrbp|talent acquisition|recruiter|recruitment|people operations|people & culture|employee relations)/;
+  const adminHrTitle = /(hr\s*[&+\/]?\s*admin|admin\s*[&+\/]?\s*hr)/;
+  const explicitNonHrTitle = /(billing|accountant|accounts|finance|sales|marketing|software|developer|engineer|nurse|doctor|purchase|procurement|front office|guest service|housekeeping|chef|kitchen|food & beverage|customer service|customer support|facilities|security guard|video editor|social media|reels|event executive|events executive|client intake|operations & care|technical trainer)/;
+
+  if (explicitNonHrTitle.test(title) && !positiveTitle.test(title)) return 0;
+  if (positiveTitle.test(title)) return 90;
+  if (adminHrTitle.test(title)) return 75;
+  // Description-only HR mentions are advisory context, never an acceptance signal.
+  if (positiveTitle.test(value)) return 0;
   return 0;
 }
+
 function normalize(row: IncomingJob) {
   const title = text(row.title), company = text(row.company), location = text(row.location), url = text(row.apply_url, row.job_url, row.url);
   if (!title || !company || !location || !url || !/\b(goa|panaji|panjim|margao|mapusa|vasco(?: da gama)?)\b/i.test(location)) return null;
@@ -39,7 +47,9 @@ export async function importIndiaJobs(input: { jobs?: IncomingJob[]; failures?: 
   if (!fresh.length) return { received: unique.length, fresh: 0, accepted: 0, excludedSeen: unique.length, source: input.source || "india-multi-source" };
   let ranked: Array<{ id: string; decision?: string; score?: number }> = []; try { ranked = await rankNewJobs(fresh.slice(0, 100)); } catch { ranked = []; }
   const rankMap = new Map(ranked.map(r => [r.id, r]));
-  const candidates = fresh.map(job => { const deterministic = relevanceScore(job); const ai = rankMap.get(job.id); const score = deterministic >= 40 ? Math.max(deterministic, ai?.score || 0) : (ai?.score || 0); return { job, score }; }).filter(x => x.score >= 40).sort((a, b) => b.score - a.score).slice(0, 50);
+  // Deterministic relevance is the hard gate. AI can only increase the score of
+  // an already-relevant HR title; it can never rescue a non-HR title.
+  const candidates = fresh.map(job => { const deterministic = relevanceScore(job); const ai = rankMap.get(job.id); const score = deterministic >= 40 ? Math.max(deterministic, ai?.score || 0) : 0; return { job, score, deterministic }; }).filter(x => x.deterministic >= 40 && x.score >= 40).sort((a, b) => b.score - a.score).slice(0, 50);
   const selected = candidates.map(x => ({ ...x.job, match_score: x.score }));
   const companyMap = new Map<string, string>();
   for (const job of selected) {
