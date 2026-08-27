@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { refreshDailyJobs } from "@/lib/apify";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -11,13 +9,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  try {
-    const url = new URL(request.url);
-    const force = url.searchParams.get("force") === "1";
-    const result = await refreshDailyJobs({ force });
-    return NextResponse.json({ ok: true, force, ...result });
-  } catch (error) {
-    console.error("Daily job collection failed", error);
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Job collection failed" }, { status: 500 });
-  }
+  // Job discovery now runs on the free India JobSpy GitHub Action. Keeping this
+  // endpoint as a health/status route prevents an old Vercel cron from invoking
+  // the removed Jobvetta dependency.
+  return NextResponse.json({
+    ok: true,
+    source: "india-jobspy",
+    message: "Job discovery is executed by .github/workflows/india-jobs.yml",
+  });
 }
