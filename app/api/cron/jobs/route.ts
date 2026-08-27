@@ -15,11 +15,18 @@ const ROLES = [
 ];
 const SOURCE_KEYS = ["linkedin", "indeed", "foundit", "naukri"] as const;
 const GOA = /\b(goa|panaji|panjim|margao|mapusa|vasco(?: da gama)?|calangute|porvorim|verna|bardez|anjuna|candolim|betalbatim|mobor|taleigao|salcette|solim)\b/i;
-const BAD_TITLE = /(?:\bjobs?\s+(?:in|and|near|vacancies)|\bjob\s+vacancies|\bfor\s+hire\b|\bconsultants?\s+for\s+hire\b|\bsearch\s+results?\b|\bjobs?\s+list\b|\bvacancies\s+in\b)/i;
-const FOREIGN_LOCATION = /\b(?:western cape|south africa|cape town|novi,?\s*mi|michigan|tallinn|estonia|new york,?\s*(?:ny|united states)?|united states|usa|canada|united kingdom|england|australia)\b/i;
+const BAD_TITLE = /(?:\bjobs?\s+(?:in|and|near|vacancies)|\bjob\s+vacancies|\bfor\s+hire\b|\bconsultants?\s+for\s+hire\b|\bsearch\s+results?\b|\bjobs?\s+list\b|\bvacancies\s+in\b|\bjob\s+search\b)/i;
+const FOREIGN_LOCATION = /\b(?:western cape|south africa|cape town|novi,?\s*mi|michigan|tallinn|estonia|new york|united states|usa|canada|united kingdom|england|australia)\b/i;
+const DETAIL_URL = /(?:linkedin\.com\/jobs\/view\/|indeed\.com\/viewjob(?:[/?]|$)|foundit\.in\/job\/|naukri\.com\/job-listings-)/i;
 
-type SearchResult = { title: string; url: string; context: string };
-type ZenserpResponse = { organic?: Array<{ title?: string; url?: string; destination?: string; description?: string }> };
+type SearchResult = { title: string; url: string; context: string; company?: string; location?: string; posted_at?: string; source?: string };
+type GeminiInteraction = {
+  output_text?: string;
+  steps?: Array<{
+    type?: string;
+    arguments?: { queries?: string[] };
+  }>;
+};
 
 function strip(value: string) {
   return value.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
@@ -32,100 +39,155 @@ function sourceFor(url: string) {
   if (/naukri\.com\/job-listings-/i.test(lower)) return "naukri";
   return null;
 }
-function ageHours(value: string) {
-  const t = value.toLowerCase();
-  if (/\bjust now\b|\btoday\b|\bhours? ago\b|\b1\s*hour\b/.test(t)) return 1;
-  const m = t.match(/(\d+)\s*(day|week|month)s?\s*ago/);
-  if (!m) return null;
-  const n = Number(m[1]);
-  return m[2].startsWith("week") ? n * 168 : m[2].startsWith("month") ? n * 720 : n * 24;
-}
-function companyFrom(title: string, text: string) {
-  const companyMarker = text.match(/(?:company|employer)\s*[:\-]\s*([^|•\n]{2,100})/i);
-  if (companyMarker?.[1]) return companyMarker[1].trim().replace(/[,.]$/, "");
-  const cleanTitle = strip(title).replace(/\s*[|·-]\s*(LinkedIn|Indeed|Foundit|Naukri).*$/i, "");
-  const parts = cleanTitle.split(/\s+[-–—|·]\s+/).map(s => s.trim()).filter(Boolean);
-  for (let i = parts.length - 1; i >= 0; i--) {
-    const candidate = parts[i].replace(/[,.]$/, "");
-    if (!candidate || GOA.test(candidate) || /^(india|goa|panaji|panjim|margao|mapusa|vasco|taleigao|bardez)$/i.test(candidate)) continue;
-    if (/^(hr|human resources|recruitment|talent acquisition|jobs?|job vacancies?)$/i.test(candidate)) continue;
-    if (candidate.length >= 3) return candidate;
-  }
-  const loc = text.match(/\b([A-Z][A-Za-z0-9&.'()\- ]{2,80})\s+(?:Goa|Panaji|Panjim|Margao|Mapusa|Vasco|Calangute|Verna|Bardez|Taleigao|Salcette)\b/i);
-  if (loc?.[1] && !BAD_TITLE.test(loc[1])) return loc[1].trim().replace(/[,.]$/, "");
-  return "Unknown company";
+function isGoa(location: string, title: string, context: string) {
+  const text = `${location} ${title} ${context}`;
+  return GOA.test(text) && !(FOREIGN_LOCATION.test(text) && !GOA.test(location));
 }
 function isUsableResult(result: SearchResult) {
   const source = sourceFor(result.url);
-  if (!source) return false;
-  const text = `${strip(result.title)} ${strip(result.context)}`;
-  if (!strip(result.title) || BAD_TITLE.test(result.title) || !GOA.test(text)) return false;
-  if (FOREIGN_LOCATION.test(text) && !/goa|panaji|panjim|margao|mapusa|vasco|verna|bardez|taleigao|salcette/i.test(text)) return false;
+  if (!source || source !== result.source) return false;
+  if (!DETAIL_URL.test(result.url)) return false;
+  if (!result.title || BAD_TITLE.test(result.title)) return false;
+  if (!result.company || /^unknown company$/i.test(result.company)) return false;
+  if (!isGoa(result.location || "", result.title, result.context)) return false;
   return true;
 }
+function parseDate(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+function extractQueries(data: GeminiInteraction) {
+  const queries: string[] = [];
+  for (const step of data.steps || []) {
+    if (step.type === "google_search_call" && Array.isArray(step.arguments?.queries)) queries.push(...step.arguments.queries.map(String));
+  }
+  return queries;
+}
+function dedupe(results: SearchResult[]) {
+  const map = new Map<string, SearchResult>();
+  for (const result of results) {
+    const key = result.url.toLowerCase().replace(/[?#].*$/, "") || `${result.title}|${result.company}|${result.location}`.toLowerCase();
+    if (!map.has(key)) map.set(key, result);
+  }
+  return [...map.values()];
+}
 
-async function zenserpSearch(query: string, engine: "google" | "bing" = "google"): Promise<SearchResult[]> {
-  const key = process.env.ZENSERP_API_KEY?.trim();
-  if (!key) throw new Error("ZENSERP_API_KEY is not configured in this deployment");
-  const params = new URLSearchParams({ q: query, engine, gl: "in", hl: "en", num: "100" });
-  const response = await fetch(`https://app.zenserp.com/api/v2/search?${params.toString()}`, { headers: { apikey: key, Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(10000) });
-  const body = await response.text();
-  if (!response.ok) throw new Error(`Zenserp ${engine} ${response.status}: ${body.slice(0, 300)}`);
-  const data = JSON.parse(body) as ZenserpResponse;
-  return (data.organic || []).flatMap(result => {
-    const url = result.destination || result.url;
-    if (!url || !/^https?:\/\//i.test(url)) return [];
-    const item = { title: strip(result.title || ""), url, context: strip(result.description || result.title || "") };
-    return isUsableResult(item) ? [item] : [];
+async function geminiGoogleSearch(prompt: string) {
+  const key = process.env.GEMINI_API_KEY?.trim();
+  if (!key) throw new Error("GEMINI_API_KEY is not configured in this deployment");
+  const model = process.env.GEMINI_JOB_SEARCH_MODEL || "gemini-3.6-flash";
+  const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+    cache: "no-store",
+    signal: AbortSignal.timeout(50000),
+    body: JSON.stringify({
+      model,
+      input: prompt,
+      tools: [{ type: "google_search" }],
+      response_format: {
+        type: "text",
+        mime_type: "application/json",
+        schema: {
+          type: "object",
+          properties: {
+            jobs: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  company: { type: "string" },
+                  location: { type: "string" },
+                  url: { type: "string" },
+                  source: { type: "string", enum: ["linkedin", "indeed", "foundit", "naukri"] },
+                  posted_at: { type: "string" },
+                  summary: { type: "string" }
+                },
+                required: ["title", "company", "location", "url", "source", "posted_at", "summary"]
+              }
+            }
+          },
+          required: ["jobs"]
+        }
+      }
+    })
   });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`Gemini search ${response.status}: ${body.slice(0, 800)}`);
+  const data = JSON.parse(body) as GeminiInteraction;
+  if (!data.output_text) throw new Error("Gemini search returned no output_text");
+  const parsed = JSON.parse(data.output_text) as { jobs?: Array<Record<string, unknown>> };
+  const results = (parsed.jobs || []).flatMap(job => {
+    const item: SearchResult = {
+      title: strip(String(job.title || "")),
+      company: strip(String(job.company || "")),
+      location: strip(String(job.location || "")),
+      url: strip(String(job.url || "")),
+      source: strip(String(job.source || "")).toLowerCase(),
+      posted_at: strip(String(job.posted_at || "")),
+      context: strip(String(job.summary || ""))
+    };
+    return /^https?:\/\//i.test(item.url) && isUsableResult(item) ? [item] : [];
+  });
+  return { results, queries: extractQueries(data) };
 }
 
 async function discover() {
   const cutoff = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
-  const after = cutoff.toISOString().slice(0, 10);
   const failures: string[] = [];
-  const sourceCounts: Record<string, number> = Object.fromEntries(SOURCE_KEYS.map(s => [s, 0]));
-
-  // Keep the SERP query intentionally simple: complex boolean/site expressions were producing
-  // intermittent Zenserp 500s. We constrain by the exact board detail URL domains afterward.
-  const query = `("HR Coordinator" OR "HR Executive" OR "Human Resources" OR "Talent Acquisition" OR "Recruitment" OR "HR Operations" OR "HRIS") Goa India jobs after:${after}`;
+  const sourceCounts: Record<string, number> = Object.fromEntries(SOURCE_KEYS.map(source => [source, 0]));
+  const prompt = `Search the live public web for CURRENT individual job postings in Goa, India posted within the last 15 days. The candidate targets these roles and close equivalents: ${ROLES.join(", ")}. Search broadly, but prioritize LinkedIn Jobs, Indeed India, Foundit India, and Naukri. You may use other company career pages only if they are clearly relevant, but set source to one of the four requested boards only when the URL belongs to that board. Do not return search/category/listing pages, recruiter-service pages, consultants-for-hire pages, jobs-in pages, or foreign jobs. Each returned item MUST be a direct individual job-detail URL, a real company, a Goa location, and a date within the last 15 days. Do not invent URLs, companies, dates, or jobs. Return at most 30 of the most relevant unique jobs. Include the exact source URL. Search the web yourself with Google Search grounding before producing the JSON.`;
   let results: SearchResult[] = [];
+  let queries: string[] = [];
   try {
-    results = await zenserpSearch(query, "google");
-    if (results.length === 0) {
-      try { results = await zenserpSearch(query, "bing"); }
-      catch (error) { failures.push(`zenserp-bing: ${error instanceof Error ? error.message : String(error)}`); }
-    }
+    const response = await geminiGoogleSearch(prompt);
+    results = response.results;
+    queries = response.queries;
   } catch (error) {
-    failures.push(`zenserp-google: ${error instanceof Error ? error.message : String(error)}`);
-    try { results = await zenserpSearch(query, "bing"); }
-    catch (error) { failures.push(`zenserp-bing: ${error instanceof Error ? error.message : String(error)}`); }
+    failures.push(error instanceof Error ? error.message : String(error));
   }
 
   const discovered: Array<Record<string, unknown>> = [];
-  const seenUrls = new Set<string>();
-  for (const result of results) {
+  for (const result of dedupe(results)) {
     const source = sourceFor(result.url);
-    if (!source || seenUrls.has(result.url)) continue;
-    seenUrls.add(result.url);
-    const text = `${result.title} ${result.context}`;
-    const age = ageHours(text);
-    if (age != null && age > 360) continue;
-    const postedAt = age == null ? new Date().toISOString() : new Date(Date.now() - age * 60 * 60 * 1000).toISOString();
-    const company = companyFrom(result.title, result.context);
-    if (company === "Unknown company") continue;
-    discovered.push({ title: result.title, company, location: "Goa", type: "Full-time", description: result.context.slice(0, 12000), apply_url: result.url, source, posted_at: postedAt, raw: { discovery: "zenserp", title: result.title, url: result.url, description: result.context } });
+    const posted = parseDate(result.posted_at);
+    if (!source || !posted) continue;
+    if (posted < cutoff || posted > new Date(Date.now() + 60 * 60 * 1000)) continue;
+    const company = result.company?.trim();
+    if (!company) continue;
+    discovered.push({
+      title: result.title,
+      company,
+      location: "Goa",
+      type: "Full-time",
+      description: result.context.slice(0, 12000),
+      apply_url: result.url,
+      source,
+      posted_at: posted.toISOString(),
+      raw: {
+        discovery: "gemini-google-search",
+        title: result.title,
+        url: result.url,
+        description: result.context,
+        search_queries: queries
+      }
+    });
     sourceCounts[source]++;
   }
 
-  const unique = new Map<string, Record<string, unknown>>();
-  for (const job of discovered) {
-    const key = `${String(job.title).toLowerCase()}|${String(job.company).toLowerCase()}|goa`;
-    if (!unique.has(key)) unique.set(key, job);
-  }
-  const jobsToImport = [...unique.values()].slice(0, 100);
-  const result = await importIndiaJobs({ jobs: jobsToImport, failures, source: "zenserp-multi-source" });
-  return { ok: failures.length === 0, windowDays: 15, roles: ROLES, discovered: jobsToImport.length, sourceCounts, failures, result };
+  const result = await importIndiaJobs({ jobs: discovered.slice(0, 100), failures, source: "gemini-google-search" });
+  return {
+    ok: failures.length === 0,
+    windowDays: 15,
+    roles: ROLES,
+    discovered: discovered.length,
+    sourceCounts,
+    failures,
+    searchQueries: queries,
+    result
+  };
 }
 
 export async function runGoaDiscovery(options?: { force?: boolean }) {
@@ -138,7 +200,9 @@ export async function runGoaDiscovery(options?: { force?: boolean }) {
   const last = state?.last_started_at ? new Date(state.last_started_at).getTime() : 0;
   const lastResult = (state?.last_result || null) as { discovered?: number } | null;
   const lastDiscovered = Number(lastResult?.discovered || 0);
-  if (!force && Date.now() - last < 6 * 60 * 60 * 1000 && lastDiscovered > 0) return { skipped: true, reason: "discovery ran within the last 6 hours" };
+  if (!force && Date.now() - last < 6 * 60 * 60 * 1000 && lastDiscovered > 0) {
+    return { skipped: true, reason: "discovery ran within the last 6 hours" };
+  }
   await client.from("job_discovery_state").upsert({ id: true, last_started_at: new Date().toISOString() });
   try {
     const result = await discover();
@@ -152,7 +216,13 @@ export async function runGoaDiscovery(options?: { force?: boolean }) {
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
-  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try { return NextResponse.json(await runGoaDiscovery()); }
-  catch (error) { console.error("Daily job collection failed", error); return NextResponse.json({ error: error instanceof Error ? error.message : "Discovery failed" }, { status: 500 }); }
+  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  try {
+    return NextResponse.json(await runGoaDiscovery());
+  } catch (error) {
+    console.error("Daily job collection failed", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Discovery failed" }, { status: 500 });
+  }
 }
