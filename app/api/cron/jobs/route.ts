@@ -45,12 +45,29 @@ function companyFrom(title: string, text: string) {
 }
 
 async function zenserpSearch(query: string): Promise<SearchResult[]> {
-  const key = process.env.ZENSERP_API_KEY;
-  if (!key) throw new Error("ZENSERP_API_KEY is not configured");
-  const params = new URLSearchParams({ q: query, engine: "google", location: "Goa,India", gl: "in", hl: "en", num: "100" });
-  const response = await fetch(`https://app.zenserp.com/api/v2/search?${params.toString()}`, { headers: { apikey: key, Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(10000) });
+  const key = process.env.ZENSERP_API_KEY?.trim();
+  if (!key) throw new Error("ZENSERP_API_KEY is not configured in this deployment");
+
+  // Zenserp's current API docs use search_engine=google.com for the engine selector.
+  // Keep authentication in the header so the secret never appears in request URLs.
+  const params = new URLSearchParams({
+    q: query,
+    search_engine: "google.com",
+    location: "Goa,India",
+    gl: "in",
+    hl: "en",
+    num: "100",
+  });
+  const response = await fetch(`https://app.zenserp.com/api/v2/search?${params.toString()}`, {
+    headers: { apikey: key, Accept: "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(10000),
+  });
   const body = await response.text();
-  if (!response.ok) throw new Error(`Zenserp ${response.status}: ${body.slice(0, 300)}`);
+  if (!response.ok) {
+    const safeBody = body.replace(/\b[0-9a-f]{24,}\b/gi, "[redacted]").slice(0, 300);
+    throw new Error(`Zenserp ${response.status}: ${safeBody}`);
+  }
   const data = JSON.parse(body) as ZenserpResponse;
   return (data.organic || []).flatMap(result => {
     const url = result.destination || result.url;
